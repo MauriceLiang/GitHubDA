@@ -1,0 +1,4 @@
+{
+  "data": {"scope": "research", "dataset_id": "research-empty-fixture", "kpis": {"repositories_total": 0, "repositories_analyzed": 0, "stars_median": null, "recently_pushed_90d_count": null}, "language_distribution": [], "stars_distribution": [{"bucket": "0-999", "count": 0}, {"bucket": "1000-9999", "count": 0}, {"bucket": "10000+", "count": 0}], "source_metadata": {"source": "GitHub REST API", "collected_at": null, "window_start": null, "window_end": null, "sample_size": 0, "dataset_id": "research-empty-fixture", "coverage": "not_collected", "notes": ["测试 fixture，无研究成员"]}},
+  "meta": {"request_id": "req_fixture", "generated_at": "2026-10-13T00:00:00Z"}
+}

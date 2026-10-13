@@ -1,0 +1,4 @@
+{
+  "data": {"repository_id": 1, "depth": "basic", "analysis_status": "completed", "metrics": {"stars": 0, "forks": 0, "age_days": null, "days_since_push": null, "release_count_365d": null, "commits_90d": null, "issues_closed_90d": null, "pr_merged_90d": null}, "modules": {"profile": {"coverage": "complete"}, "activity": {"coverage": "not_collected"}, "community": {"coverage": "not_collected"}}, "source_metadata": {"source": "GitHub REST API", "collected_at": "2026-10-13T00:00:00Z", "window_start": null, "window_end": null, "sample_size": 1, "dataset_id": null, "coverage": "complete", "notes": []}, "limitations": ["关注度指标不等于代码质量"]},
+  "meta": {"request_id": "req_fixture", "generated_at": "2026-10-13T00:00:00Z"}
+}

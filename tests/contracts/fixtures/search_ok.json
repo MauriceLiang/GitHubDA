@@ -1,0 +1,4 @@
+{
+  "data": {"items": [{"repository_id": 1, "full_name": "fixture/project", "html_url": "https://github.com/fixture/project", "description": null, "language": "Python", "stars": 0, "forks": 0, "archived": false, "is_fork": false, "already_in_library": false, "github_updated_at": null}]},
+  "meta": {"request_id": "req_fixture", "generated_at": "2026-10-13T00:00:00Z", "pagination": {"page": 1, "per_page": 20, "total": 1, "has_next": false}, "search": {"total_count": 1, "incomplete_results": false, "result_window_limit": 1000}}
+}

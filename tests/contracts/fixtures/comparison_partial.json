@@ -1,0 +1,4 @@
+{
+  "data": {"repositories": [{"repository_id": 1, "full_name": "fixture/one", "metrics": {"stars": 0, "forks": 0, "days_since_push": null, "commits_90d": null}, "coverage": "partial"}, {"repository_id": 2, "full_name": "fixture/two", "metrics": {"stars": 0, "forks": 0, "days_since_push": null, "commits_90d": null}, "coverage": "partial"}], "comparison_basis": {"depth": "basic", "metric_window": "latest_successful_snapshot", "same_project_type": false, "warnings": ["测试 fixture，不代表真实项目比较"]}},
+  "meta": {"request_id": "req_fixture", "generated_at": "2026-10-13T00:00:00Z"}
+}
