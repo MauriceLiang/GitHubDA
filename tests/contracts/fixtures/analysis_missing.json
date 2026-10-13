@@ -1,0 +1,4 @@
+{
+  "data": {"repository_id": 1, "depth": "deep", "analysis_status": "not_started", "metrics": null, "modules": {"profile": {"coverage": "not_collected"}, "activity": {"coverage": "not_collected"}, "community": {"coverage": "not_collected"}}, "source_metadata": null, "limitations": ["尚无该分析深度的有效结果"]},
+  "meta": {"request_id": "req_fixture", "generated_at": "2026-10-13T00:00:00Z"}
+}
