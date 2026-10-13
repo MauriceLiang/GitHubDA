@@ -1,0 +1,13 @@
+{
+  "data": {
+    "dataset_id": "research-2026-v1",
+    "records_total": 400,
+    "records_analyzable": 365,
+    "missing_fields": [{"field": "pushed_at", "count": 3, "rate": 0.0075}],
+    "excluded_by_reason": [{"reason": "resource_collection", "count": 8}],
+    "stale_count": 22,
+    "sampling_rules_version": "selection-v1",
+    "coverage_notes": ["研究对象为筛选后的高关注度仓库，不代表全量 GitHub"]
+  },
+  "meta": {"request_id": "req_mock_quality", "generated_at": "2026-10-13T10:30:00Z"}
+}

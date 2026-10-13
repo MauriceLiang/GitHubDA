@@ -1,0 +1,11 @@
+{
+  "data": {
+    "api": "ok",
+    "database": "ok",
+    "worker": "stale",
+    "worker_last_heartbeat_at": "2026-10-13T08:00:00Z",
+    "github": {"rate_limit_remaining": null, "rate_limit_reset_at": null, "checked_at": null},
+    "queue": {"queued": 3, "running": 0, "failed": 2}
+  },
+  "meta": {"request_id": "req_mock_worker_stale", "generated_at": "2026-10-13T10:30:00Z"}
+}

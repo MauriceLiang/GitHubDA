@@ -1,0 +1,20 @@
+{
+  "data": {
+    "scope": "library",
+    "dataset_id": null,
+    "kpis": {"repositories_total": 2, "repositories_analyzed": 2, "stars_median": 87186.5, "recently_pushed_90d_count": 2},
+    "language_distribution": [{"language": "Python", "count": 1}, {"language": "Rust", "count": 1}],
+    "stars_distribution": [{"bucket": "10000+", "count": 2}],
+    "source_metadata": {
+      "source": "GitHub REST API",
+      "collected_at": "2026-10-13T10:30:18Z",
+      "window_start": null,
+      "window_end": null,
+      "sample_size": 2,
+      "dataset_id": "library-default",
+      "coverage": "complete",
+      "notes": []
+    }
+  },
+  "meta": {"request_id": "req_mock_overview_library_complete", "generated_at": "2026-10-13T10:30:18Z"}
+}

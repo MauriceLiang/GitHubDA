@@ -1,0 +1,12 @@
+{
+  "data": {
+    "repository_id": 1362490,
+    "depth": "basic",
+    "analysis_status": "queued",
+    "metrics": null,
+    "modules": {},
+    "source_metadata": null,
+    "limitations": []
+  },
+  "meta": {"request_id": "req_mock_analysis_missing", "generated_at": "2026-10-13T10:30:00Z"}
+}

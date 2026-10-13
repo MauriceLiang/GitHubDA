@@ -1,0 +1,36 @@
+{
+  "data": {
+    "repository": {
+      "repository_id": 724712,
+      "full_name": "rust-lang/rust",
+      "description": "Empowering everyone to build reliable and efficient software.",
+      "language": "Rust",
+      "stars": 119774,
+      "forks": 18447,
+      "created_at": "2010-06-16T20:39:03Z",
+      "pushed_at": "2026-10-13T08:00:00Z",
+      "archived": false,
+      "analysis_status": "completed",
+      "data_status": "fresh",
+      "last_successful_collection_at": "2026-10-13T10:00:00Z",
+      "latest_task_id": null,
+      "datasets": ["library-default"]
+    },
+    "html_url": "https://github.com/rust-lang/rust",
+    "topics": ["rust", "compiler", "language"],
+    "license_spdx": "MIT",
+    "size_kb": 768000,
+    "open_issues_and_pr_count": 10020,
+    "source_metadata": {
+      "source": "GitHub REST API",
+      "collected_at": "2026-10-13T10:00:00Z",
+      "window_start": null,
+      "window_end": null,
+      "sample_size": 1,
+      "dataset_id": "library-default",
+      "coverage": "complete",
+      "notes": []
+    }
+  },
+  "meta": {"request_id": "req_mock_repository_rust", "generated_at": "2026-10-13T10:00:00Z"}
+}

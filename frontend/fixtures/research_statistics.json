@@ -1,0 +1,29 @@
+{
+  "data": {
+    "dataset_id": "research-2026-v1",
+    "group_by": "language",
+    "valid_sample_size": 365,
+    "summary": {
+      "stars": {"count": 365, "mean": 2470.2, "median": 830, "std": 5100.1},
+      "forks": {"count": 365, "mean": 405.2, "median": 97, "std": 785.3}
+    },
+    "groups": [
+      {"group": "Python", "n": 92, "stars_median": 1150, "forks_median": 110, "recently_pushed_90d_pct": 62.0},
+      {"group": "Rust", "n": 87, "stars_median": 1090, "forks_median": 105, "recently_pushed_90d_pct": 68.4}
+    ],
+    "correlations": [
+      {"x": "stars", "y": "forks", "method": "spearman", "n": 365, "coefficient": 0.73, "p_value": 0.00001}
+    ],
+    "source_metadata": {
+      "source": "GitHub REST API",
+      "collected_at": "2026-10-13T10:30:00Z",
+      "window_start": null,
+      "window_end": null,
+      "sample_size": 365,
+      "dataset_id": "research-2026-v1",
+      "coverage": "partial",
+      "notes": []
+    }
+  },
+  "meta": {"request_id": "req_mock_research", "generated_at": "2026-10-13T10:30:00Z"}
+}

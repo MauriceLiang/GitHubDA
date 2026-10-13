@@ -1,0 +1,3 @@
+repository_id,full_name,language,stars,forks,created_at,pushed_at,collected_at,analysis_status,dataset_id
+1362490,psf/requests,Python,54599,12662,2011-02-13T18:38:17Z,2026-09-28T16:55:48Z,2026-10-13T10:30:00Z,completed,research-2026-v1
+724712,rust-lang/rust,Rust,119774,18447,2010-06-16T20:39:03Z,2026-10-13T08:00:00Z,2026-10-13T10:00:00Z,completed,research-2026-v1

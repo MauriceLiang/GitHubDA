@@ -1,0 +1,34 @@
+{
+  "data": {
+    "repository_id": 1362490,
+    "depth": "basic",
+    "analysis_status": "completed",
+    "metrics": {
+      "stars": 54599,
+      "forks": 12662,
+      "age_days": 5721,
+      "days_since_push": 15.7,
+      "release_count_365d": null,
+      "commits_90d": null,
+      "issues_closed_90d": null,
+      "pr_merged_90d": null
+    },
+    "modules": {
+      "profile": {"coverage": "complete"},
+      "activity": {"coverage": "not_collected"},
+      "community": {"coverage": "not_collected"}
+    },
+    "source_metadata": {
+      "source": "GitHub REST API",
+      "collected_at": "2026-10-13T10:30:00Z",
+      "window_start": null,
+      "window_end": null,
+      "sample_size": 1,
+      "dataset_id": null,
+      "coverage": "partial",
+      "notes": ["深度活动指标未采集"]
+    },
+    "limitations": ["关注度指标不等于代码质量"]
+  },
+  "meta": {"request_id": "req_mock_analysis", "generated_at": "2026-10-13T10:30:00Z"}
+}
