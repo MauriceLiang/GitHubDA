@@ -129,7 +129,7 @@ class RefreshTaskData(ContractModel):
 class AnalysisMetrics(ContractModel):
     stars: int | None
     forks: int | None
-    age_days: int | None
+    age_days: float | None
     days_since_push: float | None
     release_count_365d: int | None
     commits_90d: int | None
@@ -310,7 +310,7 @@ class DataQualityData(ContractModel):
 class ComparisonMetrics(ContractModel):
     stars: int | None = None
     forks: int | None = None
-    age_days: int | None = None
+    age_days: float | None = None
     days_since_push: float | None = None
     commits_90d: int | None = None
     release_count_365d: int | None = None

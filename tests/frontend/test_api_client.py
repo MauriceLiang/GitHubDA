@@ -5,6 +5,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from backend.app.core.config import Settings
 from frontend.api import client as client_module
 from frontend.api.client import APIClient, APISettings
 from frontend.api.errors import APIError
@@ -15,6 +16,54 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 def load_fixture(name: str) -> dict:
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+
+
+def test_frontend_read_timeout_leaves_time_for_backend_github_timeout(monkeypatch):
+    monkeypatch.delenv("GITHUB_TIMEOUT_SECONDS", raising=False)
+    backend_defaults = Settings(_env_file=None)
+
+    assert client_module.REQUEST_TIMEOUT.read > backend_defaults.github_timeout_seconds
+
+
+def test_repository_analysis_accepts_fractional_age_days():
+    analysis_response = {
+        "data": {
+            "repository_id": 1,
+            "depth": "deep",
+            "analysis_status": "partial",
+            "metrics": {
+                "stars": 1,
+                "forks": 0,
+                "age_days": 319.6,
+                "days_since_push": 0.4,
+                "release_count_365d": None,
+                "commits_90d": None,
+                "issues_closed_90d": None,
+                "pr_merged_90d": None,
+            },
+            "modules": {},
+            "source_metadata": None,
+            "limitations": [],
+        },
+        "meta": {"request_id": "req_test", "generated_at": "2026-10-14T00:00:00Z"},
+    }
+
+    def respond(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=analysis_response)
+
+    client = APIClient(
+        base_url="http://backend.test",
+        internal_api_key="test-key",
+        http_client=httpx.Client(transport=httpx.MockTransport(respond)),
+        owns_http_client=True,
+    )
+    try:
+        analysis = client.repository_analysis(1, depth="deep").data
+    finally:
+        client.close()
+
+    assert analysis.metrics is not None
+    assert analysis.metrics.age_days == 319.6
 
 
 def test_settings_read_root_env_file_and_process_environment_wins(tmp_path, monkeypatch):

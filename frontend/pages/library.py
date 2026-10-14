@@ -70,7 +70,7 @@ def render() -> None:
                 format_func={"asc": "升序", "desc": "降序"}.get,
                 key=STATE_KEYS["library_order"],
             )
-        filters_submitted = st.form_submit_button("应用筛选", use_container_width=True)
+        filters_submitted = st.form_submit_button("应用筛选", width="stretch")
     if filters_submitted:
         st.session_state[STATE_KEYS["library_page"]] = 1
 

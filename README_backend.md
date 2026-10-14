@@ -7,8 +7,8 @@
 项目按 Python 3.12 运行。创建虚拟环境并安装依赖：
 
 ```bash
-uv venv --python 3.12
-uv pip install --python .venv/bin/python -e '.[dev]'
+uv sync --all-extras
+source .venv/bin/activate
 cp .env.example .env
 ```
 
@@ -17,6 +17,16 @@ cp .env.example .env
 默认 SQLite 文件固定解析到仓库根目录的 `data/app.db`，不受启动时当前目录影响。原始压缩 JSON 写入 `data/raw/`。可用 `DATABASE_URL` 与 `RAW_DATA_DIR` 覆盖路径。
 
 ## 数据库与启动
+
+完整项目推荐使用仓库根目录的一键启动命令：
+
+```bash
+uv run --locked --all-extras python -m scripts.start
+```
+
+它会自动升级数据库，并依次启动 API、Worker 和 Streamlit 前端。首次运行会创建 `.env` 并生成本机随机 `INTERNAL_API_KEY`；访问地址和局域网设置见 [README.md](README.md)。
+
+需要单独调试后端时，可手动运行迁移并分别启动 API 与 Worker：
 
 从空库执行迁移：
 

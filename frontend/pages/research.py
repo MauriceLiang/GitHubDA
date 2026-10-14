@@ -92,10 +92,10 @@ def render() -> None:
                     ),
                 )
                 figure.update_layout(yaxis_title="Star 中位数")
-                st.plotly_chart(figure, use_container_width=True, config={"displayModeBar": False})
+                st.plotly_chart(figure, width="stretch", config={"displayModeBar": False})
                 st.caption(f"研究数据集 {dataset_id} · 有效样本 n={statistics.valid_sample_size}")
             except ImportError:
-                st.error("当前环境未安装 Plotly；请按 frontend/requirements.txt 安装依赖。")
+                st.error("当前环境未安装 Plotly；请按项目安装说明安装前端依赖。")
         else:
             st.info("当前筛选没有可绘制的有效数值。")
 
@@ -104,7 +104,7 @@ def render() -> None:
             st.dataframe(
                 [item.model_dump(mode="json") for item in statistics.groups],
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
         else:
             st.info("没有可用分组。")
