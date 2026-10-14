@@ -1,32 +1,164 @@
 import json
+import logging
+import time
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from backend.app.core.clock import iso_z, utc_now
 from backend.app.core.exceptions import AppError
-from backend.app.integrations.github.client import GitHubClient
-from backend.app.persistence.models import AnalysisResult, ActivityWindow, CollectionLog, CollectionTask, Repository, RepositorySnapshot
+from backend.app.integrations.github.client import GitHubClient, PageObservation, PaginatedResult
+from backend.app.persistence.db import begin_immediate
+from backend.app.persistence.models import AnalysisResult, ActivityWindow, CollectionLog, CollectionTask, Repository, RepositorySnapshot, TaskModuleProgress
 from backend.app.pipeline.cleaner import clean_repository_profile
 from backend.app.pipeline.feature_builder import build_profile_metrics
 from backend.app.pipeline.quality import overall_coverage
 from backend.app.pipeline.raw_archive import archive_json
 from backend.app.services.repositories import latest_analysis, latest_snapshot, repository_from_github
 from backend.app.worker.queue import update_phase
+from backend.app.worker.progress import TaskProgressReporter
+from backend.app.worker.telemetry import log_module_timing, log_page_progress, log_task_timing, request_metrics_delta
+
+
+logger = logging.getLogger(__name__)
+
+
+def _request_metrics(github: GitHubClient) -> dict[str, int | float]:
+    snapshot = getattr(github, "request_metrics_snapshot", None)
+    return snapshot() if snapshot else {}
+
+
+def _log_task_timing(
+    github: GitHubClient,
+    task_id: str,
+    repository_id: int | None,
+    depth: str | None,
+    status: str,
+    started_at: float,
+    initial_metrics: dict[str, int | float],
+) -> None:
+    final_metrics = _request_metrics(github)
+    log_task_timing(
+        task_id=task_id,
+        repository_id=repository_id,
+        depth=depth,
+        status=status,
+        duration_ms=(time.monotonic() - started_at) * 1000,
+        metrics=request_metrics_delta(final_metrics, initial_metrics),
+    )
+
+
+def _log_profile_timing(
+    github: GitHubClient,
+    task_id: str,
+    repository_id: int,
+    started_at: float,
+    initial_metrics: dict[str, int | float],
+    status: str,
+) -> None:
+    final_metrics = _request_metrics(github)
+    succeeded = status in {"complete", "reused"}
+    metrics = request_metrics_delta(final_metrics, initial_metrics)
+    log_module_timing(
+        task_id=task_id,
+        repository_id=repository_id,
+        module="profile",
+        http_calls=int(metrics["http_calls"]),
+        pages_fetched=0 if status == "failed" else 1,
+        observed_items=0 if status == "failed" else 1,
+        duration_ms=(time.monotonic() - started_at) * 1000,
+        coverage="complete" if succeeded else "partial",
+        error_code=None if succeeded else status,
+        rate_limited_count=int(metrics["rate_limited_count"]),
+        timeout_count=int(metrics["timeout_count"]),
+    )
+
+
+def _owns_attempt(task: CollectionTask | None, attempt: int | None, lease_owner: str | None, now) -> bool:
+    return bool(
+        task
+        and attempt is not None
+        and task.status == "running"
+        and task.attempt == attempt
+        and task.lease_owner == lease_owner
+        and task.lease_until is not None
+        and task.lease_until > now
+    )
+
+
+def _complete_not_modified(session: Session, task_id: str, repository_id: int, attempt: int | None, lease_owner: str | None) -> bool:
+    session.rollback()
+    begin_immediate(session)
+    task = session.get(CollectionTask, task_id)
+    now = utc_now()
+    if not _owns_attempt(task, attempt, lease_owner, now):
+        session.rollback()
+        return False
+    repo = session.get(Repository, repository_id)
+    if repo:
+        repo.last_seen_at = now
+    task.status = "succeeded"
+    task.phase = None
+    task.current_module = None
+    task.message = "GitHub 确认仓库资料未变化，沿用最近一次有效观测"
+    task.finished_at = now
+    task.heartbeat_at = now
+    task.lease_until = None
+    session.add(CollectionLog(request_id=task.task_id, task_id=task.task_id, repository_id=repository_id, event_type="not_modified", source_endpoint=f"/repositories/{repository_id}", http_status=304, message_redacted="ETag 命中；未新增指标快照"))
+    session.commit()
+    return True
+
+
+def _update_phase(
+    session: Session,
+    task: CollectionTask,
+    reporter: TaskProgressReporter | None,
+    phase: str,
+    message: str,
+    progress_percent: int | None,
+) -> None:
+    if reporter:
+        reporter.set_phase(phase, message, progress_percent)
+    else:
+        update_phase(
+            session,
+            task.task_id,
+            phase,
+            message,
+            attempt=task.attempt,
+            lease_owner=task.lease_owner,
+            progress_percent=progress_percent,
+        )
 
 
 def execute_task(session_factory, task_id: str, github: GitHubClient) -> None:
     session: Session = session_factory()
+    expected_attempt: int | None = None
+    expected_owner: str | None = None
+    repository_id: int | None = None
+    depth: str | None = None
+    reporter: TaskProgressReporter | None = None
+    task_started = time.monotonic()
+    initial_metrics = _request_metrics(github)
     try:
         task = session.get(CollectionTask, task_id)
         if task is None or task.status != "running":
             return
+        expected_attempt = task.attempt
+        expected_owner = task.lease_owner
+        repository_id = task.repository_id
+        depth = task.depth
+        if task.depth == "deep" and task.lease_owner:
+            reporter = TaskProgressReporter(session_factory, task.task_id, task.attempt, task.lease_owner)
         repo = session.get(Repository, task.repository_id)
         if repo is None:
-            _finish_failed(session, task, "RESOURCE_NOT_FOUND", "本地仓库记录不存在")
+            if _finish_failed(session, task_id, "RESOURCE_NOT_FOUND", "本地仓库记录不存在", expected_attempt, expected_owner):
+                _log_task_timing(github, task_id, repository_id, depth, "failed", task_started, initial_metrics)
             return
+        profile_started = time.monotonic()
+        if reporter:
+            reporter.begin_module("profile", page_cap=1)
         previous = latest_snapshot(session, repo.repository_id)
         reusable_basic_analysis = None
         request_etag = None
@@ -46,24 +178,40 @@ def execute_task(session_factory, task_id: str, github: GitHubClient) -> None:
                 reusable_basic_analysis = candidate
                 request_etag = previous.response_etag
         try:
+            profile_metrics_before = _request_metrics(github)
             payload, status, etag = github.get_repository_by_id(repo.repository_id, request_etag)
             if status == 304:
                 if reusable_basic_analysis is None:
                     raise AppError(502, "GITHUB_UPSTREAM_ERROR", "GitHub 返回 304，但没有可复用的当前 basic 分析结果", {"http_status": 304})
-                repo.last_seen_at = utc_now()
-                task.status = "succeeded"
-                task.phase = None
-                task.message = "GitHub 确认仓库资料未变化，沿用最近一次有效观测"
-                task.finished_at = utc_now()
-                task.lease_until = None
-                session.add(CollectionLog(request_id=task.task_id, task_id=task.task_id, repository_id=repo.repository_id, event_type="not_modified", source_endpoint=f"/repositories/{repo.repository_id}", http_status=304, message_redacted="ETag 命中；未新增指标快照"))
-                session.commit()
+                _log_profile_timing(github, task_id, repo.repository_id, profile_started, profile_metrics_before, "reused")
+                completed = _complete_not_modified(session, task_id, repo.repository_id, expected_attempt, expected_owner)
+                if completed:
+                    _log_task_timing(github, task_id, repo.repository_id, task.depth, "succeeded", task_started, initial_metrics)
                 return
             if payload is None:
                 raise AppError(502, "GITHUB_UPSTREAM_ERROR", "GitHub 未返回仓库资料")
         except AppError as exc:
-            _finish_failed(session, task, exc.code, exc.message, details=exc.details)
+            _log_profile_timing(github, task_id, repo.repository_id, profile_started, profile_metrics_before, exc.code)
+            if reporter:
+                reporter.finish_module(
+                    "profile",
+                    status="failed",
+                    coverage="partial",
+                    elapsed_seconds=time.monotonic() - profile_started,
+                    error_code=exc.code,
+                )
+            if _finish_failed(session, task_id, exc.code, exc.message, expected_attempt, expected_owner, details=exc.details):
+                _log_task_timing(github, task_id, repository_id, depth, "failed", task_started, initial_metrics)
             return
+        _log_profile_timing(github, task_id, repo.repository_id, profile_started, profile_metrics_before, "complete")
+        if reporter:
+            reporter.page_fetched("profile", pages_fetched=1, observed_items=1)
+            reporter.finish_module(
+                "profile",
+                status="complete",
+                coverage="complete",
+                elapsed_seconds=time.monotonic() - profile_started,
+            )
 
         try:
             archive_path = archive_json(repo.repository_id, task.task_id, "repository", {"source_endpoint": f"/repositories/{repo.repository_id}", "collected_at": iso_z(utc_now()), "http_status": status, "etag": etag, "data": payload})
@@ -71,11 +219,13 @@ def execute_task(session_factory, task_id: str, github: GitHubClient) -> None:
             archive_path = None
             session.add(CollectionLog(request_id=task.task_id, task_id=task.task_id, repository_id=repo.repository_id, event_type="archive_failed", source_endpoint=f"/repositories/{repo.repository_id}", http_status=status, message_redacted="原始数据归档写入失败"))
 
-        update_phase(session, task.task_id, "cleaning", "正在规范化 GitHub 仓库字段")
+        session.commit()
+        _update_phase(session, task, reporter, "cleaning", "正在规范化 GitHub 仓库字段", 12 if reporter else None)
         try:
             cleaned = clean_repository_profile(payload, repo.repository_id)
         except AppError as exc:
-            _finish_failed(session, task, exc.code, exc.message)
+            if _finish_failed(session, task_id, exc.code, exc.message, expected_attempt, expected_owner):
+                _log_task_timing(github, task_id, repository_id, depth, "failed", task_started, initial_metrics)
             return
 
         collected_at = utc_now()
@@ -86,18 +236,26 @@ def execute_task(session_factory, task_id: str, github: GitHubClient) -> None:
         window_start = collected_at - timedelta(days=90)
         window_end = collected_at
         if task.depth == "deep":
-            update_phase(session, task.task_id, "collecting", "正在采集有限时间窗的深度活动数据")
-            activity, depth_coverage = _collect_deep(github, cleaned["full_name"], window_start, window_end, task)
+            if reporter:
+                reporter.set_phase("collecting", "正在采集有限时间窗的深度活动数据", 12)
+            activity, depth_coverage = _collect_deep(github, cleaned["full_name"], window_start, window_end, task, reporter)
             for metric, key in (("commits_90d", "commits_count"), ("issues_closed_90d", "issues_closed_count"), ("pr_merged_90d", "pulls_merged_count"), ("release_count_365d", "releases_count")):
                 metrics[metric] = activity[key] if activity["coverage_by_module"][key] == "complete" else None
 
-        update_phase(session, task.task_id, "analyzing", "正在计算基础指标与数据覆盖")
+        _update_phase(session, task, reporter, "analyzing", "正在计算基础指标与数据覆盖", 94 if reporter else None)
         coverage = overall_coverage({"profile": "complete", "activity": depth_coverage})
         limitations = ["关注度指标不等于代码质量"]
         if task.depth == "deep" and depth_coverage == "partial":
             limitations.append("部分深度活动端点或分页未能完整采集")
-        update_phase(session, task.task_id, "persisting", "正在保存快照、分析结果与来源记录")
+        _update_phase(session, task, reporter, "persisting", "正在保存快照、分析结果与来源记录", 98 if reporter else None)
 
+        session.rollback()
+        begin_immediate(session)
+        task = session.get(CollectionTask, task_id)
+        now = utc_now()
+        if not _owns_attempt(task, expected_attempt, expected_owner, now):
+            session.rollback()
+            return
         repo = repository_from_github(session, payload)
         snapshot = RepositorySnapshot(
             repository_id=repo.repository_id,
@@ -163,18 +321,35 @@ def execute_task(session_factory, task_id: str, github: GitHubClient) -> None:
         session.add(result)
         task.status = "partial" if coverage == "partial" else "succeeded"
         task.phase = None
-        task.progress_percent = None
+        task.current_module = None
+        if reporter:
+            task.progress_kind = "stages"
+            task.progress_percent = 100
+            task.progress_updated_at = now
+        else:
+            task.progress_kind = "unknown"
+            task.progress_percent = None
         task.message = "基础数据与分析已完成" if coverage == "complete" else "基础数据已保存，部分深度模块未完整采集"
-        task.finished_at = utc_now()
+        task.finished_at = now
         task.heartbeat_at = task.finished_at
         task.lease_until = None
         session.add(CollectionLog(request_id=task.task_id, task_id=task.task_id, repository_id=repo.repository_id, event_type="collection_completed", source_endpoint=f"/repositories/{repo.repository_id}", http_status=status, message_redacted=f"depth={task.depth}; coverage={coverage}"))
         session.commit()
+        _log_task_timing(github, task_id, repository_id, depth, task.status, task_started, initial_metrics)
     except Exception as exc:
         session.rollback()
-        task = session.get(CollectionTask, task_id)
-        if task:
-            _finish_failed(session, task, "WORKER_EXECUTION_FAILED", f"采集任务执行失败：{type(exc).__name__}")
+        if expected_attempt is not None:
+            logger.error("Task execution failed task_id=%s error_type=%s", task_id, type(exc).__name__)
+            failed = _finish_failed(
+                session,
+                task_id,
+                "WORKER_EXECUTION_FAILED",
+                f"采集任务执行失败：{type(exc).__name__}",
+                expected_attempt,
+                expected_owner,
+            )
+            if failed:
+                _log_task_timing(github, task_id, repository_id, depth, "failed", task_started, initial_metrics)
     finally:
         session.close()
 
@@ -185,28 +360,120 @@ def _parse(value: str | None):
     return parse_github_datetime(value)
 
 
-def _collect_deep(github: GitHubClient, full_name: str, start, end, task: CollectionTask) -> tuple[dict[str, Any], str]:
+def _collect_deep(
+    github: GitHubClient,
+    full_name: str,
+    start,
+    end,
+    task: CollectionTask,
+    reporter: TaskProgressReporter | None = None,
+) -> tuple[dict[str, Any], str]:
     start_iso = start.isoformat(timespec="seconds") + "Z"
     end_iso = end.isoformat(timespec="seconds") + "Z"
     raw: dict[str, Any] = {}
     coverage: dict[str, str] = {}
     data: dict[str, list[dict[str, Any]]] = {}
     calls = (
-        ("commits", lambda: github.list_commits(full_name, start_iso, end_iso)),
-        ("issues", lambda: github.list_issues(full_name, start_iso, "all")),
-        ("pulls", lambda: github.list_pulls(full_name, "closed")),
-        ("releases", lambda: github.list_releases(full_name)),
+        ("commits", lambda callback: github.list_commits_detailed(full_name, start_iso, end_iso, on_page=callback), lambda: github.list_commits(full_name, start_iso, end_iso)),
+        ("issues", lambda callback: github.list_issues_detailed(full_name, start_iso, "all", on_page=callback), lambda: github.list_issues(full_name, start_iso, "all")),
+        ("pulls", lambda callback: github.list_pulls_detailed(full_name, "closed", on_page=callback), lambda: github.list_pulls(full_name, "closed")),
+        ("releases", lambda callback: github.list_releases_detailed(full_name, on_page=callback), lambda: github.list_releases(full_name)),
     )
-    for name, fetch in calls:
+    for name, fetch_detailed, fetch_legacy in calls:
+        module_started = time.monotonic()
+        page_cap = getattr(github, "max_pages", None)
+        if reporter:
+            reporter.begin_module(name, page_cap)
+
+        def on_page(observation: PageObservation, module: str = name) -> None:
+            if reporter:
+                reporter.page_fetched(module, observation.pages_fetched, observation.observed_items)
+            log_page_progress(
+                task_id=task.task_id,
+                repository_id=task.repository_id,
+                module=module,
+                page_index=observation.page_index,
+                pages_fetched=observation.pages_fetched,
+                observed_items=observation.observed_items,
+                duration_ms=observation.duration_ms,
+                has_next=observation.has_next,
+            )
+
         try:
-            rows, complete, pages = fetch()
-            data[name] = rows
-            raw[name] = pages
-            coverage[name] = "complete" if complete else "partial"
+            if hasattr(github, f"list_{name}_detailed"):
+                result = fetch_detailed(on_page)
+            else:
+                try:
+                    rows, complete, pages = fetch_legacy()
+                    result = PaginatedResult(
+                        items=rows,
+                        raw_pages=pages,
+                        complete=complete,
+                        pages_fetched=len(pages),
+                        observed_items=len(rows),
+                        has_next=not complete,
+                    )
+                except AppError as exc:
+                    result = PaginatedResult(
+                        items=[],
+                        raw_pages=[],
+                        complete=False,
+                        pages_fetched=0,
+                        observed_items=0,
+                        has_next=True,
+                        error_code=exc.code,
+                        error_message=exc.message,
+                        error_status_code=exc.status_code,
+                        error_details=dict(exc.details),
+                    )
         except AppError as exc:
-            data[name] = []
-            raw[name] = {"error": exc.code, "message": exc.message}
-            coverage[name] = "partial"
+            result = PaginatedResult(
+                items=[],
+                raw_pages=[],
+                complete=False,
+                pages_fetched=0,
+                observed_items=0,
+                has_next=True,
+                error_code=exc.code,
+                error_message=exc.message,
+                error_status_code=exc.status_code,
+                error_details=dict(exc.details),
+            )
+
+        data[name] = result.items
+        module_coverage = "complete" if result.complete and result.error_code is None else "partial"
+        coverage[name] = module_coverage
+        module_status = "complete" if module_coverage == "complete" else ("partial" if result.pages_fetched else "failed")
+        error_code = result.error_code or ("GITHUB_MAX_PAGES" if result.has_next else None)
+        if error_code:
+            raw[name] = {
+                "pages": result.raw_pages,
+                "error": error_code,
+                "message": result.error_message or "达到分页上限，仍有后续页面",
+            }
+        else:
+            raw[name] = result.raw_pages
+        if reporter:
+            reporter.finish_module(
+                name,
+                status=module_status,
+                coverage=module_coverage,
+                elapsed_seconds=time.monotonic() - module_started,
+                error_code=error_code,
+            )
+        log_module_timing(
+            task_id=task.task_id,
+            repository_id=task.repository_id,
+            module=name,
+            http_calls=result.http_calls,
+            pages_fetched=result.pages_fetched,
+            observed_items=result.observed_items,
+            duration_ms=result.duration_ms or (time.monotonic() - module_started) * 1000,
+            coverage=module_coverage,
+            error_code=error_code,
+            rate_limited_count=result.rate_limited_count,
+            timeout_count=result.timeout_count,
+        )
     try:
         archive_json(task.repository_id, task.task_id, "deep_responses", raw)
     except OSError:
@@ -239,13 +506,41 @@ def _collect_deep(github: GitHubClient, full_name: str, start, end, task: Collec
     return values, values["coverage"]
 
 
-def _finish_failed(session: Session, task: CollectionTask, code: str, message: str, details: dict[str, Any] | None = None) -> None:
+def _finish_failed(
+    session: Session,
+    task_id: str,
+    code: str,
+    message: str,
+    expected_attempt: int | None,
+    expected_owner: str | None,
+    details: dict[str, Any] | None = None,
+) -> bool:
+    session.rollback()
+    begin_immediate(session)
+    task = session.get(CollectionTask, task_id)
+    now = utc_now()
+    if not _owns_attempt(task, expected_attempt, expected_owner, now):
+        session.rollback()
+        return False
     task.status = "failed"
     task.phase = None
+    if task.current_module:
+        progress = session.get(TaskModuleProgress, (task.task_id, task.current_module))
+        if progress and progress.attempt == task.attempt and progress.status == "running":
+            progress.status = "failed"
+            progress.coverage = "partial"
+            progress.finished_at = now
+            progress.elapsed_seconds = max(0.0, (now - progress.started_at).total_seconds()) if progress.started_at else None
+            progress.error_code = code
+            progress.last_updated_at = now
+    task.current_module = None
     task.error_code = code
     task.error_message = message[:1000]
     task.message = message[:1000]
-    task.finished_at = utc_now()
+    task.finished_at = now
+    task.heartbeat_at = now
     task.lease_until = None
+    task.progress_updated_at = now if task.progress_kind == "stages" else task.progress_updated_at
     session.add(CollectionLog(request_id=task.task_id, task_id=task.task_id, repository_id=task.repository_id, event_type="collection_failed", http_status=details.get("http_status") if details else None, message_redacted=f"{code}: {message[:800]}"))
     session.commit()
+    return True

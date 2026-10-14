@@ -156,20 +156,35 @@
   "task_id": "11111111-2222-4333-8444-555555555555",
   "repository_id": 1362490,
   "type": "collect_repository",
-  "depth": "basic",
+  "depth": "deep",
   "status": "running",
-  "phase": "cleaning",
-  "progress_percent": null,
-  "message": "正在规范化仓库字段",
+  "phase": "collecting",
+  "progress_percent": 28,
+  "message": "正在采集Issues：已获取 2 页",
   "attempt": 1,
   "created_at": "2026-10-13T10:30:00Z",
   "started_at": "2026-10-13T10:30:03Z",
   "finished_at": null,
-  "error": null
+  "error": null,
+  "progress_kind": "stages",
+  "progress_updated_at": "2026-10-13T10:30:17Z",
+  "current_module": "issues",
+  "modules": [
+    {"name":"profile","status":"complete","coverage":"complete","pages_fetched":1,"page_cap":1,"observed_items":1,"elapsed_seconds":0.6,"error_code":null},
+    {"name":"commits","status":"complete","coverage":"complete","pages_fetched":1,"page_cap":10,"observed_items":40,"elapsed_seconds":1.2,"error_code":null},
+    {"name":"issues","status":"running","coverage":"unknown","pages_fetched":2,"page_cap":10,"observed_items":80,"elapsed_seconds":null,"error_code":null},
+    {"name":"pulls","status":"pending","coverage":"not_collected","pages_fetched":0,"page_cap":10,"observed_items":0,"elapsed_seconds":null,"error_code":null},
+    {"name":"releases","status":"pending","coverage":"not_collected","pages_fetched":0,"page_cap":10,"observed_items":0,"elapsed_seconds":null,"error_code":null}
+  ],
+  "elapsed_seconds": 14.2,
+  "eta_seconds": null
 }
 ```
 
-进度百分比无法可靠计算时必须为 null，前端用不定进度提示而非虚假百分比。
+新增进度字段是对既有 Task 的可选兼容扩展。`progress_kind` 为 `stages|unknown`；`current_module` 为 `profile|commits|issues|pulls|releases|null`。模块状态为 `pending|running|complete|partial|failed|skipped`，覆盖状态为 `complete|partial|not_collected|unknown`。模块计数只表示本次实际观测，不是 GitHub 全站总量。
+
+`progress_percent` 仅描述流程阶段；页数上限、限流或请求失败必须通过模块 `status/coverage` 说明。无法给出可信阶段进度时返回 null 并使用 `progress_kind="unknown"`。`eta_seconds` 暂无经验证的预测模型，始终返回 null。历史任务和排队任务的 `modules` 可以是空数组；任务列表提供进度概览但不查询模块明细，详情接口按固定模块顺序返回明细。
+
 新创建或重试产生的排队任务 `attempt=0`；Worker 认领后变为 `running` 且 `attempt=1`。租约过期后重新认领继续递增；重试始终创建新的任务 ID，并从 0 开始计数。
 
 ### 3.4 `SourceMetadata`（分析可信度元信息）
@@ -376,11 +391,11 @@
 ### API-12 `GET /api/v1/tasks`
 
 - Query：`status` 可选（支持任务状态枚举），`repository_id` 可选，`page`/`per_page` 通用。
-- 200 `data.items = Task[]`；按创建时间倒序，带 pagination。
+- 200 `data.items = Task[]`；按创建时间倒序，带 pagination。返回新增任务级进度字段，`modules` 固定为空数组以避免列表查询逐任务读取模块明细。
 
 ### API-13 `GET /api/v1/tasks/{task_id}`
 
-- 200 `data = Task`；404 不存在。建议前端 2–5s 轮询，完成后停止。
+- 200 `data = Task`，包括最新持久化的模块分页状态；404 不存在。建议前端 2–5s 轮询，完成后停止。关闭页面不会暂停 Worker，恢复页面后继续读取同一 task ID。
 
 ### API-14 `POST /api/v1/tasks/{task_id}/retry`
 

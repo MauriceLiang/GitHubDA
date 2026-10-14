@@ -1,8 +1,9 @@
 import re
 import threading
 import time
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -16,6 +17,34 @@ _rate_lock = threading.Lock()
 _request_lock = threading.Lock()
 _rate_cache: dict[str, Any] = {"remaining": None, "reset_at": None, "checked_at": None}
 REPO_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
+
+
+@dataclass(frozen=True)
+class PageObservation:
+    page_index: int
+    pages_fetched: int
+    observed_items: int
+    page_cap: int
+    has_next: bool
+    duration_ms: float
+
+
+@dataclass(frozen=True)
+class PaginatedResult:
+    items: list[dict[str, Any]]
+    raw_pages: list[str]
+    complete: bool
+    pages_fetched: int
+    observed_items: int
+    has_next: bool
+    error_code: str | None = None
+    error_message: str | None = None
+    error_status_code: int | None = None
+    error_details: dict[str, Any] = field(default_factory=dict)
+    http_calls: int = 0
+    rate_limited_count: int = 0
+    timeout_count: int = 0
+    duration_ms: float = 0.0
 
 
 class GitHubClient:
@@ -40,6 +69,13 @@ class GitHubClient:
             self.client.headers.update(headers)
         self._owns_client = client is None
         self.max_pages = settings.github_max_pages
+        self._metrics_lock = threading.Lock()
+        self._request_metrics: dict[str, int | float] = {
+            "http_calls": 0,
+            "rate_limited_count": 0,
+            "timeout_count": 0,
+            "duration_ms": 0.0,
+        }
 
     def close(self) -> None:
         if self._owns_client:
@@ -55,23 +91,42 @@ class GitHubClient:
         with _request_lock:
             return self._request_locked(method, path_or_url, params=params, etag=etag)
 
+    def request_metrics_snapshot(self) -> dict[str, int | float]:
+        with self._metrics_lock:
+            return dict(self._request_metrics)
+
+    def _record_http_call(self, started_at: float, *, timed_out: bool = False, rate_limited: bool = False) -> None:
+        elapsed_ms = max(0.0, (time.monotonic() - started_at) * 1000)
+        with self._metrics_lock:
+            self._request_metrics["http_calls"] += 1
+            self._request_metrics["duration_ms"] += elapsed_ms
+            if timed_out:
+                self._request_metrics["timeout_count"] += 1
+            if rate_limited:
+                self._request_metrics["rate_limited_count"] += 1
+
     def _request_locked(self, method: str, path_or_url: str, *, params: dict[str, Any] | None = None, etag: str | None = None, redirect_depth: int = 0) -> httpx.Response:
         if path_or_url.startswith("http"):
             if not _is_github_api_url(path_or_url):
                 raise AppError(502, "GITHUB_UPSTREAM_ERROR", "GitHub 返回了无效分页地址")
         headers = {"If-None-Match": etag} if etag else None
         for attempt in range(3):
+            request_started = time.monotonic()
             try:
                 response = self.client.request(method, path_or_url, params=params, headers=headers)
             except httpx.TimeoutException as exc:
+                self._record_http_call(request_started, timed_out=True)
                 raise AppError(504, "GITHUB_TIMEOUT", "GitHub 请求超时") from exc
             except httpx.RequestError as exc:
+                self._record_http_call(request_started)
                 if attempt < 2:
                     time.sleep(0.15 * (2**attempt))
                     continue
                 raise AppError(502, "GITHUB_UPSTREAM_ERROR", "无法连接 GitHub") from exc
+            limited = response.status_code == 429 or _is_rate_limited_403(response)
+            self._record_http_call(request_started, rate_limited=limited)
             self._cache_rate_limit(response)
-            if response.status_code == 429 or _is_rate_limited_403(response):
+            if limited:
                 retry_after = _retry_after(response)
                 raise AppError(429, "GITHUB_RATE_LIMITED", "GitHub 请求暂时受限，请稍后重试", {"retry_after_seconds": retry_after})
             if response.status_code == 404:
@@ -150,39 +205,117 @@ class GitHubClient:
         owner, repo = validate_full_name(full_name)
         return self.list_paginated(f"/repos/{owner}/{repo}/commits", {"since": since, "until": until})
 
+    def list_commits_detailed(self, full_name: str, since: str, until: str, *, on_page: Callable[[PageObservation], None] | None = None) -> PaginatedResult:
+        owner, repo = validate_full_name(full_name)
+        return self.list_paginated_detailed(f"/repos/{owner}/{repo}/commits", {"since": since, "until": until}, on_page=on_page)
+
     def list_issues(self, full_name: str, since: str, state: str = "all"):
         owner, repo = validate_full_name(full_name)
         return self.list_paginated(f"/repos/{owner}/{repo}/issues", {"state": state, "since": since})
+
+    def list_issues_detailed(self, full_name: str, since: str, state: str = "all", *, on_page: Callable[[PageObservation], None] | None = None) -> PaginatedResult:
+        owner, repo = validate_full_name(full_name)
+        return self.list_paginated_detailed(f"/repos/{owner}/{repo}/issues", {"state": state, "since": since}, on_page=on_page)
 
     def list_pulls(self, full_name: str, state: str = "closed"):
         owner, repo = validate_full_name(full_name)
         return self.list_paginated(f"/repos/{owner}/{repo}/pulls", {"state": state, "sort": "updated", "direction": "desc"})
 
+    def list_pulls_detailed(self, full_name: str, state: str = "closed", *, on_page: Callable[[PageObservation], None] | None = None) -> PaginatedResult:
+        owner, repo = validate_full_name(full_name)
+        return self.list_paginated_detailed(f"/repos/{owner}/{repo}/pulls", {"state": state, "sort": "updated", "direction": "desc"}, on_page=on_page)
+
     def list_releases(self, full_name: str):
         owner, repo = validate_full_name(full_name)
         return self.list_paginated(f"/repos/{owner}/{repo}/releases", {})
 
+    def list_releases_detailed(self, full_name: str, *, on_page: Callable[[PageObservation], None] | None = None) -> PaginatedResult:
+        owner, repo = validate_full_name(full_name)
+        return self.list_paginated_detailed(f"/repos/{owner}/{repo}/releases", {}, on_page=on_page)
+
     def list_paginated(self, path: str, params: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], bool, list[str]]:
+        result = self.list_paginated_detailed(path, params)
+        if result.error_code:
+            raise AppError(
+                result.error_status_code or 502,
+                result.error_code,
+                result.error_message or "GitHub 分页请求失败",
+                result.error_details,
+            )
+        return result.items, result.complete, result.raw_pages
+
+    def list_paginated_detailed(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        *,
+        on_page: Callable[[PageObservation], None] | None = None,
+        max_pages: int | None = None,
+    ) -> PaginatedResult:
         rows: list[dict[str, Any]] = []
         archives: list[str] = []
         next_url: str | None = path
         current_params = {"per_page": 100, **(params or {})}
-        complete = True
-        for page in range(self.max_pages):
-            response = self._request("GET", next_url, params=current_params if page == 0 else None)
-            data = _json(response)
-            if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
-                raise AppError(502, "GITHUB_UPSTREAM_ERROR", "GitHub 返回了无效分页数据")
+        page_cap = self.max_pages if max_pages is None else max_pages
+        if page_cap < 1:
+            raise ValueError("max_pages must be positive")
+        initial_metrics = self.request_metrics_snapshot()
+        started_at = time.monotonic()
+        for page in range(page_cap):
+            page_started = time.monotonic()
+            try:
+                response = self._request("GET", next_url, params=current_params if page == 0 else None)
+                data = _json(response)
+                if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
+                    raise AppError(502, "GITHUB_UPSTREAM_ERROR", "GitHub 返回了无效分页数据")
+            except AppError as exc:
+                final_metrics = self.request_metrics_snapshot()
+                return PaginatedResult(
+                    items=rows,
+                    raw_pages=archives,
+                    complete=False,
+                    pages_fetched=len(archives),
+                    observed_items=len(rows),
+                    has_next=next_url is not None,
+                    error_code=exc.code,
+                    error_message=exc.message,
+                    error_status_code=exc.status_code,
+                    error_details=dict(exc.details),
+                    http_calls=int(final_metrics["http_calls"] - initial_metrics["http_calls"]),
+                    rate_limited_count=int(final_metrics["rate_limited_count"] - initial_metrics["rate_limited_count"]),
+                    timeout_count=int(final_metrics["timeout_count"] - initial_metrics["timeout_count"]),
+                    duration_ms=max(0.0, (time.monotonic() - started_at) * 1000),
+                )
             rows.extend(data)
             archives.append(response.text)
             link = response.links.get("next")
             next_url = link["url"] if link else None
             current_params = {}
+            if on_page is not None:
+                on_page(PageObservation(
+                    page_index=page + 1,
+                    pages_fetched=len(archives),
+                    observed_items=len(rows),
+                    page_cap=page_cap,
+                    has_next=next_url is not None,
+                    duration_ms=max(0.0, (time.monotonic() - page_started) * 1000),
+                ))
             if next_url is None:
-                return rows, complete, archives
-        if next_url:
-            complete = False
-        return rows, complete, archives
+                break
+        final_metrics = self.request_metrics_snapshot()
+        has_next = next_url is not None
+        return PaginatedResult(
+            items=rows,
+            raw_pages=archives,
+            complete=not has_next,
+            pages_fetched=len(archives),
+            observed_items=len(rows),
+            has_next=has_next,
+            http_calls=int(final_metrics["http_calls"] - initial_metrics["http_calls"]),
+            rate_limited_count=int(final_metrics["rate_limited_count"] - initial_metrics["rate_limited_count"]),
+            timeout_count=int(final_metrics["timeout_count"] - initial_metrics["timeout_count"]),
+            duration_ms=max(0.0, (time.monotonic() - started_at) * 1000),
+        )
 
 
 def validate_full_name(value: str) -> tuple[str, str]:

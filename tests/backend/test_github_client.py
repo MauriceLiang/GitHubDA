@@ -2,7 +2,7 @@ import httpx
 import pytest
 
 from backend.app.core.exceptions import AppError
-from backend.app.integrations.github.client import GITHUB_API, GitHubClient, parse_repository_input
+from backend.app.integrations.github.client import GITHUB_API, GitHubClient, PageObservation, parse_repository_input
 
 
 @pytest.mark.parametrize("value", ["https://github.com.evil.test/owner/repo", "https://user@github.com/owner/repo", "https://github.com:8443/owner/repo", "https://github.com/owner/repo/issues"])
@@ -111,3 +111,84 @@ def test_deep_pagination_reports_truncated_coverage(monkeypatch):
     assert rows == [{"sha": "one"}]
     assert complete is False
     assert responses == 1
+
+
+def test_detailed_pagination_reports_each_validated_page():
+    calls = []
+
+    def respond(request):
+        page = int(request.url.params.get("page", "1"))
+        calls.append(page)
+        headers = {}
+        if page < 3:
+            headers["Link"] = f'<{GITHUB_API}/repos/a/b/issues?page={page + 1}>; rel="next"'
+        return httpx.Response(200, headers=headers, json=[{"id": page * 10}, {"id": page * 10 + 1}])
+
+    client = GitHubClient(httpx.Client(base_url=GITHUB_API, transport=httpx.MockTransport(respond)))
+    observations: list[PageObservation] = []
+    result = client.list_paginated_detailed("/repos/a/b/issues", on_page=observations.append)
+
+    assert calls == [1, 2, 3]
+    assert result.complete is True
+    assert result.pages_fetched == 3
+    assert result.observed_items == 6
+    assert result.http_calls == 3
+    assert [item.pages_fetched for item in observations] == [1, 2, 3]
+    assert [item.observed_items for item in observations] == [2, 4, 6]
+    assert [item.has_next for item in observations] == [True, True, False]
+
+
+def test_detailed_pagination_retains_successful_pages_before_timeout():
+    calls = []
+
+    def respond(request):
+        page = int(request.url.params.get("page", "1"))
+        calls.append(page)
+        if page == 3:
+            raise httpx.ReadTimeout("timed out", request=request)
+        return httpx.Response(
+            200,
+            headers={"Link": f'<{GITHUB_API}/repos/a/b/issues?page={page + 1}>; rel="next"'},
+            json=[{"id": page}, {"id": page + 10}],
+        )
+
+    client = GitHubClient(httpx.Client(base_url=GITHUB_API, transport=httpx.MockTransport(respond)))
+    result = client.list_paginated_detailed("/repos/a/b/issues")
+
+    assert calls == [1, 2, 3]
+    assert result.items == [{"id": 1}, {"id": 11}, {"id": 2}, {"id": 12}]
+    assert len(result.raw_pages) == 2
+    assert result.pages_fetched == 2
+    assert result.observed_items == 4
+    assert result.complete is False
+    assert result.has_next is True
+    assert result.error_code == "GITHUB_TIMEOUT"
+    assert result.timeout_count == 1
+    assert result.http_calls == 3
+
+
+def test_detailed_pagination_does_not_swallow_progress_callback_errors():
+    def respond(_request):
+        return httpx.Response(200, json=[{"id": 1}])
+
+    client = GitHubClient(httpx.Client(base_url=GITHUB_API, transport=httpx.MockTransport(respond)))
+
+    with pytest.raises(RuntimeError, match="progress store unavailable"):
+        client.list_paginated_detailed(
+            "/repos/a/b/issues",
+            on_page=lambda _observation: (_ for _ in ()).throw(RuntimeError("progress store unavailable")),
+        )
+
+
+def test_legacy_pagination_preserves_app_error_contract_after_detailed_failure():
+    def respond(_request):
+        return httpx.Response(429, headers={"Retry-After": "11"}, json={"message": "limited"})
+
+    client = GitHubClient(httpx.Client(base_url=GITHUB_API, transport=httpx.MockTransport(respond)))
+
+    with pytest.raises(AppError) as error:
+        client.list_paginated("/repos/a/b/issues")
+
+    assert error.value.status_code == 429
+    assert error.value.code == "GITHUB_RATE_LIMITED"
+    assert error.value.details["retry_after_seconds"] == 11

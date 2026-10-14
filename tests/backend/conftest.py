@@ -6,7 +6,6 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from backend.app.api.dependencies import get_github_client, get_session
 from backend.app.main import app
@@ -50,12 +49,14 @@ class FakeGitHub:
 
 
 @pytest.fixture
-def backend_client():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+def backend_client(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'backend-test.db'}", connect_args={"check_same_thread": False, "timeout": 5})
 
     @event.listens_for(engine, "connect")
     def enable_foreign_keys(connection, _record):
         connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("PRAGMA busy_timeout=5000")
+        connection.execute("PRAGMA journal_mode=WAL")
 
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)

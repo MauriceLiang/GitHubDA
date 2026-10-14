@@ -7,7 +7,8 @@ from sqlalchemy import func, select
 
 from backend.app.core.clock import iso_z, utc_now
 from backend.app.core.exceptions import AppError
-from backend.app.persistence.models import ActivityWindow, AnalysisResult, CollectionLog, CollectionTask, RepositorySnapshot
+from backend.app.integrations.github.client import PageObservation, PaginatedResult
+from backend.app.persistence.models import ActivityWindow, AnalysisResult, CollectionLog, CollectionTask, RepositorySnapshot, TaskModuleProgress
 from backend.app.pipeline.raw_archive import archive_json
 from backend.app.services.repositories import latest_analysis
 from backend.app.worker.executor import execute_task
@@ -26,6 +27,7 @@ class WorkerGitHub:
         self.fail_module = fail_module
         self.profile_etags = []
         self.deep_calls = []
+        self.max_pages = 10
         event_time = iso_z(utc_now() - timedelta(days=1))
         self.records = {
             "commits": [{"sha": "commit-1"}],
@@ -46,6 +48,29 @@ class WorkerGitHub:
             raise AppError(504, "GITHUB_TIMEOUT", f"{module} timed out")
         return self.records[module], True, ["[]"]
 
+    def _list_detailed(self, module, on_page=None):
+        rows, complete, pages = self._list(module)
+        if on_page:
+            for index in range(len(pages)):
+                on_page(PageObservation(
+                    page_index=index + 1,
+                    pages_fetched=index + 1,
+                    observed_items=len(rows),
+                    page_cap=self.max_pages,
+                    has_next=not complete and index == len(pages) - 1,
+                    duration_ms=0.1,
+                ))
+        return PaginatedResult(
+            items=rows,
+            raw_pages=pages,
+            complete=complete,
+            pages_fetched=len(pages),
+            observed_items=len(rows),
+            has_next=not complete,
+            http_calls=len(pages),
+            duration_ms=0.1,
+        )
+
     def list_commits(self, *_args):
         return self._list("commits")
 
@@ -57,6 +82,18 @@ class WorkerGitHub:
 
     def list_releases(self, *_args):
         return self._list("releases")
+
+    def list_commits_detailed(self, _full_name, _since, _until, *, on_page=None):
+        return self._list_detailed("commits", on_page)
+
+    def list_issues_detailed(self, _full_name, _since, _state="all", *, on_page=None):
+        return self._list_detailed("issues", on_page)
+
+    def list_pulls_detailed(self, _full_name, _state="closed", *, on_page=None):
+        return self._list_detailed("pulls", on_page)
+
+    def list_releases_detailed(self, _full_name, *, on_page=None):
+        return self._list_detailed("releases", on_page)
 
 
 def _create_repository(client):
@@ -178,9 +215,14 @@ def test_deep_task_ignores_etag_and_persists_basic_and_deep_at_same_snapshot(bac
         snapshot = session.scalar(select(RepositorySnapshot).where(RepositorySnapshot.repository_id == 123).order_by(RepositorySnapshot.id.desc()))
         basic = latest_analysis(session, 123, "basic")
         deep = latest_analysis(session, 123, "deep")
+        modules = session.scalars(select(TaskModuleProgress).where(TaskModuleProgress.task_id == task_id).order_by(TaskModuleProgress.module)).all()
     assert github.profile_etags == [None]
     assert github.deep_calls == ["commits", "issues", "pulls", "releases"]
     assert task.status == "succeeded"
+    assert task.progress_kind == "stages"
+    assert task.progress_percent == 100
+    assert task.current_module is None
+    assert [item.status for item in modules] == ["complete"] * 5
     assert basic.source_collected_at == deep.source_collected_at == snapshot.collected_at
     assert basic.window_start is basic.window_end is None
     assert json.loads(basic.metrics_json)["commits_90d"] is None
@@ -191,7 +233,14 @@ def test_deep_partial_coverage_keeps_basic_profile_complete(backend_client, monk
     client, factory, default_github = backend_client
     _create_repository(client)
     task_id = _queue_task(factory, "deep")
-    _patch_archives(monkeypatch)
+    archived = {}
+
+    def capture_archive(_repository_id, _task_id, kind, value):
+        if kind == "deep_responses":
+            archived.update(value)
+        return f"test/{kind}.json.gz"
+
+    monkeypatch.setattr("backend.app.worker.executor.archive_json", capture_archive)
     github = WorkerGitHub(default_github.repository, fail_module="commits")
 
     execute_task(factory, task_id, github)
@@ -204,6 +253,7 @@ def test_deep_partial_coverage_keeps_basic_profile_complete(backend_client, monk
     assert basic.coverage == "complete"
     assert json.loads(deep.metrics_json)["commits_90d"] is None
     assert deep.coverage == "partial"
+    assert archived["commits"]["error"] == "GITHUB_TIMEOUT"
 
 
 def test_deep_activity_archive_failure_keeps_collected_snapshot(backend_client, monkeypatch):

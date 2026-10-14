@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.core.clock import utc_now
@@ -88,6 +88,9 @@ class CollectionTask(Base):
     status: Mapped[str] = mapped_column(String(20), default="queued", nullable=False)
     phase: Mapped[str | None] = mapped_column(String(20))
     progress_percent: Mapped[float | None] = mapped_column(Float)
+    progress_kind: Mapped[str] = mapped_column(String(20), default="unknown", server_default="unknown", nullable=False)
+    progress_updated_at: Mapped[object | None] = mapped_column(DateTime)
+    current_module: Mapped[str | None] = mapped_column(String(20))
     message: Mapped[str | None] = mapped_column(Text)
     attempt: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     retry_of: Mapped[str | None] = mapped_column(ForeignKey("collection_tasks.task_id"))
@@ -100,6 +103,24 @@ class CollectionTask(Base):
     error_message: Mapped[str | None] = mapped_column(Text)
     lease_owner: Mapped[str | None] = mapped_column(String(100))
     lease_until: Mapped[object | None] = mapped_column(DateTime)
+
+
+class TaskModuleProgress(Base):
+    __tablename__ = "task_module_progress"
+
+    task_id: Mapped[str] = mapped_column(ForeignKey("collection_tasks.task_id", ondelete="CASCADE"), primary_key=True)
+    module: Mapped[str] = mapped_column(String(20), primary_key=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    coverage: Mapped[str] = mapped_column(String(20), nullable=False)
+    pages_fetched: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    page_cap: Mapped[int | None] = mapped_column(Integer)
+    observed_items: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    started_at: Mapped[object | None] = mapped_column(DateTime)
+    finished_at: Mapped[object | None] = mapped_column(DateTime)
+    elapsed_seconds: Mapped[float | None] = mapped_column(Float)
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    last_updated_at: Mapped[object] = mapped_column(DateTime, default=utc_now, server_default=func.current_timestamp(), nullable=False)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class ActivityWindow(Base):

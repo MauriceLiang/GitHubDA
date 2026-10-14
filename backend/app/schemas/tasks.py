@@ -5,6 +5,17 @@ from pydantic import Field
 from backend.app.schemas.common import DTO
 
 
+class TaskModuleProgressResponse(DTO):
+    name: Literal["profile", "commits", "issues", "pulls", "releases"]
+    status: Literal["pending", "running", "complete", "partial", "failed", "skipped"]
+    coverage: Literal["complete", "partial", "not_collected", "unknown"]
+    pages_fetched: int = Field(default=0, ge=0)
+    page_cap: int | None = Field(default=None, ge=1)
+    observed_items: int = Field(default=0, ge=0)
+    elapsed_seconds: float | None = Field(default=None, ge=0)
+    error_code: str | None = None
+
+
 class TaskResponse(DTO):
     task_id: str
     repository_id: int
@@ -19,6 +30,12 @@ class TaskResponse(DTO):
     started_at: str | None
     finished_at: str | None
     error: dict[str, Any] | None
+    progress_kind: Literal["stages", "unknown"] = "unknown"
+    progress_updated_at: str | None = None
+    current_module: Literal["profile", "commits", "issues", "pulls", "releases"] | None = None
+    modules: list[TaskModuleProgressResponse] = Field(default_factory=list)
+    elapsed_seconds: float | None = Field(default=None, ge=0)
+    eta_seconds: float | None = Field(default=None, ge=0)
 
 
 class TaskListResponse(DTO):

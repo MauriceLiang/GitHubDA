@@ -9,7 +9,7 @@ from backend.app.api.dependencies import get_session
 from backend.app.api.helpers import envelope, pagination
 from backend.app.core.clock import iso_z, utc_now
 from backend.app.core.exceptions import AppError
-from backend.app.persistence.models import CollectionTask, Repository, RequestIdempotency
+from backend.app.persistence.models import CollectionTask, Repository, RequestIdempotency, TaskModuleProgress
 from backend.app.persistence.db import begin_immediate
 from backend.app.schemas.common import SuccessEnvelope
 from backend.app.schemas.tasks import RetryResponse, TaskListResponse, TaskResponse
@@ -18,11 +18,51 @@ from backend.app.services.repositories import add_idempotency_response, cached_i
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 TASK_STATUSES = {"queued", "running", "succeeded", "partial", "failed", "cancelled"}
+MODULE_ORDER = ("profile", "commits", "issues", "pulls", "releases")
 
 
-def task_payload(task: CollectionTask) -> dict:
+def task_payload(task: CollectionTask, module_progress: list[TaskModuleProgress] | None = None) -> dict:
     error = {"code": task.error_code, "message": task.error_message} if task.error_code else None
-    return {"task_id": task.task_id, "repository_id": task.repository_id, "type": task.type, "depth": task.depth, "status": task.status, "phase": task.phase, "progress_percent": task.progress_percent, "message": task.message, "attempt": task.attempt, "created_at": iso_z(task.created_at), "started_at": iso_z(task.started_at), "finished_at": iso_z(task.finished_at), "error": error}
+    module_by_name = {row.module: row for row in module_progress or []}
+    modules = [
+        {
+            "name": name,
+            "status": module_by_name[name].status,
+            "coverage": module_by_name[name].coverage,
+            "pages_fetched": module_by_name[name].pages_fetched,
+            "page_cap": module_by_name[name].page_cap,
+            "observed_items": module_by_name[name].observed_items,
+            "elapsed_seconds": module_by_name[name].elapsed_seconds,
+            "error_code": module_by_name[name].error_code,
+        }
+        for name in MODULE_ORDER
+        if name in module_by_name
+    ]
+    elapsed_seconds = None
+    if task.started_at is not None:
+        elapsed_end = task.finished_at or utc_now()
+        elapsed_seconds = round(max(0.0, (elapsed_end - task.started_at).total_seconds()), 3)
+    return {
+        "task_id": task.task_id,
+        "repository_id": task.repository_id,
+        "type": task.type,
+        "depth": task.depth,
+        "status": task.status,
+        "phase": task.phase,
+        "progress_percent": task.progress_percent,
+        "message": task.message,
+        "attempt": task.attempt,
+        "created_at": iso_z(task.created_at),
+        "started_at": iso_z(task.started_at),
+        "finished_at": iso_z(task.finished_at),
+        "error": error,
+        "progress_kind": task.progress_kind or "unknown",
+        "progress_updated_at": iso_z(task.progress_updated_at),
+        "current_module": task.current_module,
+        "modules": modules,
+        "elapsed_seconds": elapsed_seconds,
+        "eta_seconds": None,
+    }
 
 
 @router.get("", response_model=SuccessEnvelope[TaskListResponse])
@@ -52,7 +92,10 @@ def get_task(task_id: str, request: Request, session: Session = Depends(get_sess
     task = session.get(CollectionTask, task_id)
     if task is None:
         raise AppError(404, "RESOURCE_NOT_FOUND", "任务不存在")
-    return envelope(request, task_payload(task))
+    modules = session.scalars(
+        select(TaskModuleProgress).where(TaskModuleProgress.task_id == task_id)
+    ).all()
+    return envelope(request, task_payload(task, modules))
 
 
 @router.post("/{task_id}/retry", response_model=SuccessEnvelope[RetryResponse], status_code=202)
