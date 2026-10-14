@@ -80,7 +80,7 @@ def render() -> None:
                 "数据覆盖": repository.coverage,
             }
         )
-    st.dataframe(metric_rows, hide_index=True, use_container_width=True)
+    st.dataframe(metric_rows, hide_index=True, width="stretch")
 
     chart_theme = st.session_state[STATE_KEYS["chart_theme"]]
     names = [item.full_name for item in result.repositories]
@@ -91,9 +91,9 @@ def render() -> None:
             continue
         try:
             figure = comparison_figure(names, values, metric=metric, theme=chart_theme)
-            st.plotly_chart(figure, use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(figure, width="stretch", config={"displayModeBar": False})
         except ImportError:
-            st.error("当前环境未安装 Plotly；请按 frontend/requirements.txt 安装依赖。")
+            st.error("当前环境未安装 Plotly；请按项目安装说明安装前端依赖。")
 
 
 render()

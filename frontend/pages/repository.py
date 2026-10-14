@@ -124,9 +124,9 @@ def render() -> None:
                         metric="Stars" if metric == "stars" else "Forks",
                         theme=st.session_state.get(STATE_KEYS["chart_theme"], "dark"),
                     )
-                    st.plotly_chart(figure, use_container_width=True, config={"displayModeBar": False})
+                    st.plotly_chart(figure, width="stretch", config={"displayModeBar": False})
                 except ImportError:
-                    st.error("当前环境未安装 Plotly；请按 frontend/requirements.txt 安装依赖。")
+                    st.error("当前环境未安装 Plotly；请按项目安装说明安装前端依赖。")
             st.dataframe(
                 [{"采集日期": item.date.isoformat(), "观测值": item.value} for item in series.points],
                 hide_index=True,

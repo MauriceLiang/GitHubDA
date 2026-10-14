@@ -84,10 +84,10 @@ def render() -> None:
                         theme=theme,
                         colors=[language_color(item.language, theme) for item in overview.language_distribution],
                     )
-                    st.plotly_chart(figure, use_container_width=True, config={"displayModeBar": False})
+                    st.plotly_chart(figure, width="stretch", config={"displayModeBar": False})
                     st.caption(f"有效分析样本 n={kpis.repositories_analyzed}")
                 except ImportError:
-                    st.error("当前环境未安装 Plotly；请按 frontend/requirements.txt 安装依赖。")
+                    st.error("当前环境未安装 Plotly；请按项目安装说明安装前端依赖。")
         if overview.stars_distribution:
             with right:
                 try:
@@ -98,10 +98,10 @@ def render() -> None:
                         theme=theme,
                     )
                     figure.update_traces(marker_color=options["palette"][0])
-                    st.plotly_chart(figure, use_container_width=True, config={"displayModeBar": False})
+                    st.plotly_chart(figure, width="stretch", config={"displayModeBar": False})
                     st.caption(f"有效分析样本 n={kpis.repositories_analyzed}")
                 except ImportError:
-                    st.error("当前环境未安装 Plotly；请按 frontend/requirements.txt 安装依赖。")
+                    st.error("当前环境未安装 Plotly；请按项目安装说明安装前端依赖。")
 
     render_provenance(overview.source_metadata)
 

@@ -114,7 +114,11 @@ def execute_task(session_factory, task_id: str, github: GitHubClient) -> None:
         )
         session.add(snapshot)
         if activity is not None:
-            activity_archive = archive_json(repo.repository_id, task.task_id, "activity", activity["raw"])
+            try:
+                activity_archive = archive_json(repo.repository_id, task.task_id, "activity", activity["raw"])
+            except OSError:
+                activity_archive = None
+                session.add(CollectionLog(request_id=task.task_id, task_id=task.task_id, repository_id=repo.repository_id, event_type="archive_failed", source_endpoint="activity", http_status=status, message_redacted="深度活动数据归档写入失败"))
             session.add(ActivityWindow(
                 repository_id=repo.repository_id,
                 depth="deep",
