@@ -40,7 +40,8 @@ from frontend.api.models import (
 
 DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-REQUEST_TIMEOUT = httpx.Timeout(connect=3.0, read=15.0, write=15.0, pool=3.0)
+# Let the API return its structured 15-second GitHub upstream timeout first.
+REQUEST_TIMEOUT = httpx.Timeout(connect=3.0, read=20.0, write=15.0, pool=3.0)
 
 T = TypeVar("T")
 

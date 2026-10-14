@@ -123,7 +123,7 @@ def render() -> None:
             )
         with repository_filter:
             repository_input = st.text_input("仓库 ID（可选）", key=STATE_KEYS["task_repository_filter"])
-        filters_submitted = st.form_submit_button("刷新任务列表", use_container_width=True)
+        filters_submitted = st.form_submit_button("刷新任务列表", width="stretch")
     if filters_submitted:
         st.session_state[STATE_KEYS["task_page"]] = 1
 
@@ -164,7 +164,7 @@ def render() -> None:
                     for task in tasks
                 ],
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
             for task in tasks:
                 if st.button("查看并轮询", key=f"open-task-{task.task_id}"):

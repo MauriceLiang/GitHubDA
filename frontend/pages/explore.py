@@ -77,7 +77,7 @@ def render() -> None:
                 format_func={"best_match": "最佳匹配", "stars": "Star", "updated": "最近更新"}.get,
                 key=STATE_KEYS["search_sort"],
             )
-        submitted = st.form_submit_button("搜索 / 解析", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("搜索 / 解析", type="primary", width="stretch")
 
     if submitted:
         st.session_state[STATE_KEYS["search_page"]] = 1

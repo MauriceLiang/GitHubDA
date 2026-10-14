@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 
 from backend.app.core.clock import iso_z, utc_now
 from backend.app.core.exceptions import AppError
-from backend.app.persistence.models import AnalysisResult, CollectionLog, CollectionTask, RepositorySnapshot
+from backend.app.persistence.models import ActivityWindow, AnalysisResult, CollectionLog, CollectionTask, RepositorySnapshot
 from backend.app.pipeline.raw_archive import archive_json
 from backend.app.services.repositories import latest_analysis
 from backend.app.worker.executor import execute_task
@@ -204,6 +204,30 @@ def test_deep_partial_coverage_keeps_basic_profile_complete(backend_client, monk
     assert basic.coverage == "complete"
     assert json.loads(deep.metrics_json)["commits_90d"] is None
     assert deep.coverage == "partial"
+
+
+def test_deep_activity_archive_failure_keeps_collected_snapshot(backend_client, monkeypatch):
+    client, factory, default_github = backend_client
+    _create_repository(client)
+    task_id = _queue_task(factory, "deep")
+
+    def archive(_repository_id, _task_id, kind, _value):
+        if kind == "activity":
+            raise OSError("disk full")
+        return f"test/{kind}.json.gz"
+
+    monkeypatch.setattr("backend.app.worker.executor.archive_json", archive)
+    execute_task(factory, task_id, WorkerGitHub(default_github.repository))
+
+    with factory() as session:
+        task = session.get(CollectionTask, task_id)
+        snapshot = session.scalar(select(RepositorySnapshot).where(RepositorySnapshot.repository_id == 123))
+        activity = session.scalar(select(ActivityWindow).where(ActivityWindow.repository_id == 123))
+        archive_error = session.scalar(select(CollectionLog).where(CollectionLog.task_id == task_id, CollectionLog.event_type == "archive_failed"))
+    assert task.status == "succeeded"
+    assert snapshot is not None
+    assert activity is not None and activity.source_archive_path is None
+    assert archive_error is not None
 
 
 def test_raw_archive_rejects_paths_outside_configured_root(tmp_path, monkeypatch):
