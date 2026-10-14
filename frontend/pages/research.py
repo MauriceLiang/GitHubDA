@@ -57,6 +57,8 @@ def render() -> None:
         f"样本版本：{dataset.dataset_id} · 规则：{dataset.rules_version or '未提供'} · 冻结：{dataset.frozen_at.isoformat() if dataset.frozen_at else '未冻结'}"
     )
     st.caption(f"样本成员 n={dataset.sample_size} · 可分析 n={statistics.valid_sample_size}")
+    if dataset.sample_size == 0 or statistics.valid_sample_size == 0:
+        st.info("当前研究样本没有可分析记录；不会生成统计图表或用 0 填补缺失值。")
 
     descriptive, distribution, groups, correlations, quality_tab = st.tabs(
         ["描述统计", "特征分布", "分组比较", "相关性", "数据质量"]
@@ -132,9 +134,22 @@ def render() -> None:
             st.caption(f"采样规则：{quality.sampling_rules_version} · 缺失率分母为样本总数 {quality.records_total}。")
             if quality.missing_fields:
                 st.subheader("缺失字段")
-                st.dataframe([item.model_dump(mode="json") for item in quality.missing_fields], hide_index=True)
+                st.dataframe(
+                    [
+                        {
+                            "字段": item.field,
+                            "缺失数": item.count,
+                            "缺失率": "—（无有效分母）" if item.rate is None else f"{item.rate:.1%}",
+                        }
+                        for item in quality.missing_fields
+                    ],
+                    hide_index=True,
+                )
             if quality.excluded_by_reason:
                 st.subheader("排除原因")
                 st.dataframe([item.model_dump(mode="json") for item in quality.excluded_by_reason], hide_index=True)
             for note in quality.coverage_notes:
                 st.caption(note)
+
+
+render()
