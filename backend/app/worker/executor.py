@@ -13,7 +13,7 @@ from backend.app.pipeline.cleaner import clean_repository_profile
 from backend.app.pipeline.feature_builder import build_profile_metrics
 from backend.app.pipeline.quality import overall_coverage
 from backend.app.pipeline.raw_archive import archive_json
-from backend.app.services.repositories import latest_snapshot, repository_from_github
+from backend.app.services.repositories import latest_analysis, latest_snapshot, repository_from_github
 from backend.app.worker.queue import update_phase
 
 
@@ -28,9 +28,28 @@ def execute_task(session_factory, task_id: str, github: GitHubClient) -> None:
             _finish_failed(session, task, "RESOURCE_NOT_FOUND", "本地仓库记录不存在")
             return
         previous = latest_snapshot(session, repo.repository_id)
+        reusable_basic_analysis = None
+        request_etag = None
+        if task.depth == "basic" and previous and previous.response_etag:
+            candidate = latest_analysis(session, repo.repository_id, "basic")
+            try:
+                candidate_metrics = json.loads(candidate.metrics_json) if candidate else None
+            except (TypeError, ValueError):
+                candidate_metrics = None
+            if (
+                candidate
+                and candidate.source_collected_at == previous.collected_at
+                and (candidate.valid_sample_size or 0) > 0
+                and candidate.coverage in {"complete", "partial"}
+                and isinstance(candidate_metrics, dict)
+            ):
+                reusable_basic_analysis = candidate
+                request_etag = previous.response_etag
         try:
-            payload, status, etag = github.get_repository_by_id(repo.repository_id, previous.response_etag if previous else None)
+            payload, status, etag = github.get_repository_by_id(repo.repository_id, request_etag)
             if status == 304:
+                if reusable_basic_analysis is None:
+                    raise AppError(502, "GITHUB_UPSTREAM_ERROR", "GitHub 返回 304，但没有可复用的当前 basic 分析结果", {"http_status": 304})
                 repo.last_seen_at = utc_now()
                 task.status = "succeeded"
                 task.phase = None
@@ -60,7 +79,8 @@ def execute_task(session_factory, task_id: str, github: GitHubClient) -> None:
             return
 
         collected_at = utc_now()
-        metrics = build_profile_metrics(cleaned, collected_at)
+        profile_metrics = build_profile_metrics(cleaned, collected_at)
+        metrics = dict(profile_metrics)
         depth_coverage = "complete"
         activity: dict[str, Any] | None = None
         window_start = collected_at - timedelta(days=90)
@@ -124,6 +144,18 @@ def execute_task(session_factory, task_id: str, github: GitHubClient) -> None:
             limitations_json=json.dumps(limitations, ensure_ascii=False),
             valid_sample_size=1,
         )
+        if task.depth == "deep":
+            session.add(AnalysisResult(
+                repository_id=repo.repository_id,
+                analysis_kind="basic",
+                metric_version="metrics-v1",
+                source_collected_at=collected_at,
+                calculated_at=utc_now(),
+                coverage="complete",
+                metrics_json=json.dumps(profile_metrics, ensure_ascii=False),
+                limitations_json=json.dumps(["关注度指标不等于代码质量"], ensure_ascii=False),
+                valid_sample_size=1,
+            ))
         session.add(result)
         task.status = "partial" if coverage == "partial" else "succeeded"
         task.phase = None

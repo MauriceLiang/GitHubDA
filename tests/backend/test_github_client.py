@@ -27,6 +27,63 @@ def test_github_rate_limit_is_mapped_without_retry():
     assert len(calls) == 1
 
 
+def test_secondary_rate_limit_403_is_mapped_without_retry():
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        return httpx.Response(403, headers={"Retry-After": "9"}, json={"message": "You have exceeded a secondary rate limit."})
+
+    client = GitHubClient(httpx.Client(base_url=GITHUB_API, transport=httpx.MockTransport(respond)))
+    with pytest.raises(AppError) as error:
+        client.search_repositories("requests", None, None, "best_match", "desc", 1, 20)
+    assert error.value.status_code == 429
+    assert error.value.details["retry_after_seconds"] == 9
+    assert len(calls) == 1
+
+
+def test_non_rate_limit_403_is_not_reported_as_rate_limit():
+    def respond(_request):
+        return httpx.Response(403, json={"message": "Resource not accessible by integration"})
+
+    client = GitHubClient(httpx.Client(base_url=GITHUB_API, transport=httpx.MockTransport(respond)))
+    with pytest.raises(AppError) as error:
+        client.search_repositories("requests", None, None, "best_match", "desc", 1, 20)
+    assert error.value.status_code == 502
+    assert error.value.code == "GITHUB_UPSTREAM_ERROR"
+    assert error.value.details["http_status"] == 403
+
+
+def test_upstream_5xx_retries_three_times_then_maps_to_502():
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        return httpx.Response(503, json={"message": "temporarily unavailable"})
+
+    client = GitHubClient(httpx.Client(base_url=GITHUB_API, transport=httpx.MockTransport(respond)))
+    with pytest.raises(AppError) as error:
+        client.search_repositories("requests", None, None, "best_match", "desc", 1, 20)
+    assert error.value.status_code == 502
+    assert error.value.details["http_status"] == 503
+    assert len(calls) == 3
+
+
+def test_timeout_maps_to_504_without_retry():
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    client = GitHubClient(httpx.Client(base_url=GITHUB_API, transport=httpx.MockTransport(respond)))
+    with pytest.raises(AppError) as error:
+        client.search_repositories("requests", None, None, "best_match", "desc", 1, 20)
+    assert error.value.status_code == 504
+    assert error.value.code == "GITHUB_TIMEOUT"
+    assert len(calls) == 1
+
+
 def test_client_sends_versioned_json_headers():
     seen = []
 

@@ -1,5 +1,7 @@
 from typing import Any, Literal
 
+from pydantic import Field
+
 from backend.app.schemas.common import DTO
 
 
@@ -10,9 +12,9 @@ class TaskResponse(DTO):
     depth: Literal["basic", "deep"]
     status: Literal["queued", "running", "succeeded", "partial", "failed", "cancelled"]
     phase: Literal["collecting", "cleaning", "analyzing", "persisting"] | None
-    progress_percent: float | None
+    progress_percent: float | None = Field(ge=0, le=100)
     message: str | None
-    attempt: int
+    attempt: int = Field(ge=0)
     created_at: str
     started_at: str | None
     finished_at: str | None
