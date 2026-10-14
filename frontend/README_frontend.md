@@ -10,20 +10,43 @@
 - `INTERNAL_API_KEY`：仅由 Streamlit 服务端环境读取；真实模式调用受保护的 `/api/v1` 时必需
 - `MOCK_MODE`：`true` 时显式回放 `frontend/fixtures/` 中的契约样例；默认 `false`
 
+前端从仓库根目录 `.env` 读取以上设置，进程环境变量优先；不需要 `source .env`。`.env` 不应提交。设置变更后重启相关进程。
+
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r frontend/requirements.txt
-python -m streamlit run frontend/app.py --server.port 8501
+python -m pip install -e '.[dev]' -r frontend/requirements.txt
 ```
 
-演示模式：
+GitHubDA 有三个独立进程。真实采集需要 API、Worker 和 Streamlit 都运行：
+
+```bash
+# 终端 1：FastAPI
+python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+
+# 终端 2：采集 Worker
+python -m backend.app.worker.main
+
+# 终端 3：Streamlit 真实模式（仓库根目录 .env 中需有 INTERNAL_API_KEY）
+MOCK_MODE=false python -m streamlit run frontend/app.py --server.port 8501
+```
+
+仅启动 Streamlit 不会执行真实采集任务。UI 演示模式无需后端/Worker：
 
 ```bash
 MOCK_MODE=true python -m streamlit run frontend/app.py --server.port 8501
 ```
 
-Streamlit 自带的菜单保留，可在 Settings 中切换 Light/Dark；项目默认主题为 GitHub Developer Workspace Dark。图表另有配色选项，需要与界面主题保持一致。环境变量变更后重启进程。
+Streamlit 自带的菜单保留，可在 Settings 中切换 Light/Dark；项目默认主题为 GitHub Developer Workspace Dark。图表另有配色选项，需要与界面主题保持一致。
+
+## 前端验证
+
+在仓库根目录并激活上述虚拟环境后运行：
+
+```bash
+python -m compileall -q frontend tests/frontend
+python -m pytest tests/frontend -q
+```
 
 ## Mock 场景
 

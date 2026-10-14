@@ -24,6 +24,7 @@ def _search(query: str, language: str, stars_min: int, sort: str, page: int) -> 
         st.warning("请输入搜索词或 GitHub 仓库地址。")
         return
 
+    st.session_state[STATE_KEYS["search_results"]] = None
     try:
         client, _ = get_api_client()
         if _looks_like_repository_input(query):
@@ -142,7 +143,7 @@ def render() -> None:
                             st.session_state[STATE_KEYS["task_poll_complete_for"]] = None
                             st.session_state[STATE_KEYS["task_poll_error_for"]] = None
                             st.caption(f"任务：{added.task_id} · 状态：{added.analysis_status}")
-                        st.page_link("frontend/pages/library.py", label="打开我的分析库")
+                        st.page_link("pages/library.py", label="打开我的分析库")
                     except APIError as error:
                         render_api_error(error)
 
@@ -160,3 +161,6 @@ def render() -> None:
             st.session_state[STATE_KEYS["search_page"]] = new_page
             _search(query, language, int(stars_min), sort, new_page)
             st.rerun()
+
+
+render()

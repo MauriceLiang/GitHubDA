@@ -1,9 +1,11 @@
+from uuid import uuid4
+
 import streamlit as st
 
 from frontend.api.errors import APIError
 from frontend.api.factory import get_api_client
 from frontend.charts.time_series import time_series_figure
-from frontend.components.feedback import display_value, render_api_error, render_provenance
+from frontend.components.feedback import display_value, format_refresh_result, render_api_error, render_provenance
 from frontend.state.keys import STATE_KEYS
 
 
@@ -20,9 +22,15 @@ def render() -> None:
         return
 
     client, _ = get_api_client()
+    analysis_depth = st.selectbox(
+        "分析结果深度",
+        options=("basic", "deep"),
+        format_func={"basic": "基础", "deep": "深度"}.get,
+        key=STATE_KEYS["repository_analysis_depth"],
+    )
     try:
         detail = client.repository_detail(repository_id).data
-        analysis = client.repository_analysis(repository_id).data
+        analysis = client.repository_analysis(repository_id, depth=analysis_depth).data
     except APIError as error:
         render_api_error(error)
         return
@@ -47,9 +55,16 @@ def render() -> None:
 
     if st.button("开始深度分析", type="primary", disabled=analysis.analysis_status in {"queued", "processing"}):
         try:
-            task = client.refresh_repository(repository_id, depth="deep").data
+            task = client.refresh_repository(
+                repository_id,
+                depth="deep",
+                idempotency_key=str(uuid4()),
+            ).data
             st.session_state[STATE_KEYS["task_id"]] = task.task_id
-            st.success(f"深度分析任务已{'复用' if task.reused else '排队'}：{task.task_id}")
+            st.session_state[STATE_KEYS["task_poll_complete_for"]] = None
+            st.session_state[STATE_KEYS["task_poll_error_for"]] = None
+            st.toast(format_refresh_result(task, "深度分析"))
+            st.page_link("pages/operations.py", label="查看任务进度")
         except APIError as error:
             render_api_error(error)
 
@@ -107,7 +122,7 @@ def render() -> None:
                     figure = time_series_figure(
                         points,
                         metric="Stars" if metric == "stars" else "Forks",
-                        theme=st.session_state[STATE_KEYS["chart_theme"]],
+                        theme=st.session_state.get(STATE_KEYS["chart_theme"], "dark"),
                     )
                     st.plotly_chart(figure, use_container_width=True, config={"displayModeBar": False})
                 except ImportError:
@@ -120,3 +135,6 @@ def render() -> None:
         render_provenance(analysis.source_metadata or detail.source_metadata)
         for limitation in analysis.limitations:
             st.caption(f"局限：{limitation}")
+
+
+render()

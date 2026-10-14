@@ -10,6 +10,7 @@ from typing import Any, TypeVar
 from urllib.parse import quote
 
 import httpx
+from dotenv import dotenv_values
 from pydantic import TypeAdapter, ValidationError
 
 from frontend.api.errors import APIError
@@ -38,6 +39,7 @@ from frontend.api.models import (
 
 
 DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 REQUEST_TIMEOUT = httpx.Timeout(connect=3.0, read=15.0, write=15.0, pool=3.0)
 
 T = TypeVar("T")
@@ -51,13 +53,21 @@ class APISettings:
 
     @classmethod
     def from_environment(cls) -> "APISettings":
-        raw_mock_mode = os.getenv("MOCK_MODE", "false").strip().lower()
+        file_values = dotenv_values(PROJECT_ROOT / ".env")
+
+        def configured(name: str, default: str) -> str:
+            if name in os.environ:
+                return os.environ[name]
+            value = file_values.get(name)
+            return default if value is None else value
+
+        raw_mock_mode = configured("MOCK_MODE", "false").strip().lower()
         if raw_mock_mode not in {"true", "false", "1", "0", "yes", "no", "on", "off"}:
             raise ValueError("MOCK_MODE must be a boolean value")
 
         return cls(
-            api_base_url=os.getenv("API_BASE_URL", DEFAULT_API_BASE_URL).strip().rstrip("/"),
-            internal_api_key=os.getenv("INTERNAL_API_KEY", "").strip() or None,
+            api_base_url=configured("API_BASE_URL", DEFAULT_API_BASE_URL).strip().rstrip("/"),
+            internal_api_key=configured("INTERNAL_API_KEY", "").strip() or None,
             mock_mode=raw_mock_mode in {"true", "1", "yes", "on"},
         )
 
@@ -148,10 +158,21 @@ class APIClient:
         return self._request_json("GET", path, APIEnvelope[RepositoryDetailData])
 
     def refresh_repository(
-        self, repository_id: int, depth: str = "basic", force: bool = False
+        self,
+        repository_id: int,
+        depth: str = "basic",
+        force: bool = False,
+        idempotency_key: str | None = None,
     ) -> APIEnvelope[RefreshTaskData]:
         path = f"/api/v1/repositories/{int(repository_id)}/refresh"
-        return self._request_json("POST", path, APIEnvelope[RefreshTaskData], json={"depth": depth, "force": force})
+        headers = {"Idempotency-Key": idempotency_key} if idempotency_key else None
+        return self._request_json(
+            "POST",
+            path,
+            APIEnvelope[RefreshTaskData],
+            json={"depth": depth, "force": force},
+            headers=headers,
+        )
 
     def repository_analysis(self, repository_id: int, depth: str = "basic") -> APIEnvelope[RepositoryAnalysisData]:
         path = f"/api/v1/repositories/{int(repository_id)}/analysis"

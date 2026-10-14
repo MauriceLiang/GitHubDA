@@ -1,0 +1,16 @@
+{
+  "data": {
+    "dataset_id": "research-2026-v1",
+    "records_total": 0,
+    "records_analyzable": 0,
+    "missing_fields": [
+      {"field": "language", "count": 0, "rate": null},
+      {"field": "stars", "count": 0, "rate": null}
+    ],
+    "excluded_by_reason": [],
+    "stale_count": 0,
+    "sampling_rules_version": null,
+    "coverage_notes": ["缺失率分母为当前数据集成员总数。"]
+  },
+  "meta": {"request_id": "req_test_empty_data_quality", "generated_at": "2026-10-14T00:00:00Z"}
+}
