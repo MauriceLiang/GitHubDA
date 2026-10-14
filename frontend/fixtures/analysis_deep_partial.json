@@ -1,0 +1,47 @@
+{
+  "data": {
+    "repository_id": 1362490,
+    "depth": "deep",
+    "analysis_status": "partial",
+    "metrics": {
+      "stars": 54599,
+      "forks": 12662,
+      "age_days": 5721,
+      "days_since_push": 15.7,
+      "release_count_365d": null,
+      "commits_90d": 42,
+      "issues_closed_90d": null,
+      "pr_merged_90d": 18
+    },
+    "modules": {
+      "profile": {
+        "coverage": "complete"
+      },
+      "activity": {
+        "coverage": "complete"
+      },
+      "community": {
+        "coverage": "partial"
+      }
+    },
+    "source_metadata": {
+      "source": "GitHub REST API",
+      "collected_at": null,
+      "window_start": null,
+      "window_end": null,
+      "sample_size": 0,
+      "dataset_id": null,
+      "coverage": "partial",
+      "notes": [
+        "深度采集部分完成"
+      ]
+    },
+    "limitations": [
+      "深度指标只反映本次 API 观察到的记录，不代表 GitHub 全站总量。"
+    ]
+  },
+  "meta": {
+    "request_id": "req_mock_analysis_deep_partial",
+    "generated_at": "2026-10-14T01:00:00Z"
+  }
+}

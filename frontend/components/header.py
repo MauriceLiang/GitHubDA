@@ -1,32 +1,46 @@
-"""Global app header and service status area."""
+"""Compact app branding and cached service health."""
 
 from __future__ import annotations
+
+import time
 
 import streamlit as st
 
 from frontend.api.client import APIClient
 from frontend.api.errors import APIError
+from frontend.state.keys import STATE_KEYS
+
+
+_HEALTH_TTL_SECONDS = 20
 
 
 def render_header() -> None:
-    st.caption("GitHub Developer Workspace")
-    st.title("GitHub 开源项目分析台")
-    st.caption("用于发现、比较和研究开源项目的本地开发者工作台。")
+    st.caption("GitHubDA · GitHub Developer Workspace")
 
 
 def render_service_status(client: APIClient, *, mock_mode: bool) -> None:
-    if mock_mode:
-        st.warning("演示模式：当前只回放本地契约 fixture，不代表实时 GitHub 数据。")
-    elif not client.api_key_configured:
-        st.error("服务端尚未配置 INTERNAL_API_KEY；受保护的 API 请求不可用。")
+    now = time.monotonic()
+    checked_at = st.session_state[STATE_KEYS["service_status_checked_at"]]
+    if now - checked_at >= _HEALTH_TTL_SECONDS:
+        if not client.api_key_configured and not mock_mode:
+            kind, message = "error", "尚未配置 INTERNAL_API_KEY"
+        else:
+            try:
+                client.health()
+            except APIError as error:
+                kind, message = "error", error.user_message
+            else:
+                kind, message = "ok", ""
+        st.session_state[STATE_KEYS["service_status_checked_at"]] = now
+        st.session_state[STATE_KEYS["service_status_kind"]] = kind
+        st.session_state[STATE_KEYS["service_status_message"]] = message
 
-    try:
-        client.health()
-    except APIError as error:
-        st.warning(error.user_message)
-        return
-
-    if mock_mode:
-        st.caption("Fixture API 已就绪。")
-    else:
-        st.success("后端 API 可用。")
+    kind = st.session_state[STATE_KEYS["service_status_kind"]]
+    with st.sidebar:
+        st.divider()
+        if mock_mode:
+            st.caption("服务 · 本地 Mock fixture")
+        elif kind == "ok":
+            st.caption("API · 正常")
+        else:
+            st.warning(st.session_state[STATE_KEYS["service_status_message"]])
