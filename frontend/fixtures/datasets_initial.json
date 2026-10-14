@@ -16,6 +16,14 @@
         "sample_size": 1,
         "frozen_at": null,
         "rules_version": null
+      },
+      {
+        "dataset_id": "featured-default",
+        "name": "首页精选",
+        "type": "featured",
+        "sample_size": 0,
+        "frozen_at": null,
+        "rules_version": null
       }
     ]
   },

@@ -15,13 +15,12 @@ def render() -> None:
     except APIError as error:
         render_api_error(error)
         return
-    if len(repositories) < 2:
-        st.info("至少需要两个分析库成员才能比较。先在“仓库发现”添加项目。")
-        return
-
     names = {item.repository_id: item.full_name for item in repositories}
     stored = [item for item in st.session_state[STATE_KEYS["selected_repository_ids"]] if item in names]
     st.session_state[STATE_KEYS["selected_repository_ids"]] = stored
+    if len(repositories) < 2:
+        st.info("至少需要两个分析库成员才能比较。先在“仓库发现”添加项目。")
+        return
     with st.form("comparison-selection"):
         selected = st.multiselect(
             "选择 2–5 个分析库仓库；选择顺序对应展示顺序",
@@ -95,3 +94,6 @@ def render() -> None:
             st.plotly_chart(figure, use_container_width=True, config={"displayModeBar": False})
         except ImportError:
             st.error("当前环境未安装 Plotly；请按 frontend/requirements.txt 安装依赖。")
+
+
+render()

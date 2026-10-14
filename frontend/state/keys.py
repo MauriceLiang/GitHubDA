@@ -42,6 +42,8 @@ STATE_KEYS = {
     "export_dataset_id": "githubda.export_dataset_id",
     "export_payload": "githubda.export_payload",
     "mock_scenario": "githubda.mock_scenario",
+    "mock_api_client": "githubda.mock_api_client",
+    "repository_analysis_depth": "githubda.repository_analysis_depth",
 }
 
 _DEFAULTS = {
@@ -81,6 +83,8 @@ _DEFAULTS = {
     "export_dataset_id": None,
     "export_payload": None,
     "mock_scenario": "normal",
+    "mock_api_client": None,
+    "repository_analysis_depth": "basic",
 }
 
 
