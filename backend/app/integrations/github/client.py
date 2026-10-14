@@ -71,7 +71,7 @@ class GitHubClient:
                     continue
                 raise AppError(502, "GITHUB_UPSTREAM_ERROR", "无法连接 GitHub") from exc
             self._cache_rate_limit(response)
-            if response.status_code in (403, 429):
+            if response.status_code == 429 or _is_rate_limited_403(response):
                 retry_after = _retry_after(response)
                 raise AppError(429, "GITHUB_RATE_LIMITED", "GitHub 请求暂时受限，请稍后重试", {"retry_after_seconds": retry_after})
             if response.status_code == 404:
@@ -226,6 +226,18 @@ def _retry_after(response: httpx.Response) -> int | None:
     if reset and reset.isdigit():
         return max(0, int(reset) - int(time.time()))
     return None
+
+
+def _is_rate_limited_403(response: httpx.Response) -> bool:
+    if response.status_code != 403:
+        return False
+    if _retry_after(response) is not None or response.headers.get("X-RateLimit-Remaining") == "0":
+        return True
+    try:
+        message = str(response.json().get("message", "")).lower()
+    except (AttributeError, ValueError):
+        return False
+    return "rate limit" in message or "abuse detection" in message
 
 
 def _json(response: httpx.Response) -> Any:

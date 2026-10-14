@@ -1,6 +1,6 @@
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 
 T = TypeVar("T")
@@ -27,6 +27,17 @@ class ApiMeta(BaseModel):
 class SuccessEnvelope(BaseModel, Generic[T]):
     data: T
     meta: ApiMeta
+
+
+class SourceMetadata(BaseModel):
+    source: str
+    collected_at: str | None
+    window_start: str | None
+    window_end: str | None
+    sample_size: int | None = Field(ge=0)
+    dataset_id: str | None
+    coverage: Literal["complete", "partial", "not_collected"]
+    notes: list[str]
 
 
 class ErrorBody(BaseModel):
