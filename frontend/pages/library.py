@@ -6,7 +6,7 @@ import streamlit as st
 
 from frontend.api.errors import APIError
 from frontend.api.factory import get_api_client
-from frontend.components.feedback import display_value, render_api_error
+from frontend.components.feedback import display_value, format_refresh_result, format_task_attempt, render_api_error
 from frontend.state.keys import STATE_KEYS
 
 
@@ -34,9 +34,12 @@ def _show_task(client: object, task_id: str) -> None:
         return
     label = STATUS_LABELS.get(task.status, task.status)
     progress = "进度未提供" if task.progress_percent is None else f"{task.progress_percent:g}%"
-    st.info(f"任务 {task.task_id} · {label} · 阶段：{task.phase or '—'} · {progress}")
+    st.info(
+        f"任务 {task.task_id} · {label} · 阶段：{task.phase or '—'} · {progress} · 尝试次数：{format_task_attempt(task.attempt)}"
+    )
     if task.message:
         st.caption(task.message)
+    st.page_link("pages/operations.py", label="打开任务监控")
 
 
 def render() -> None:
@@ -86,6 +89,7 @@ def render() -> None:
 
     repositories = response.data.items
     if not repositories:
+        st.session_state[STATE_KEYS["selected_repository_ids"]] = []
         st.info("分析库为空。前往“仓库发现”搜索并添加公开仓库。")
         return
 
@@ -119,7 +123,7 @@ def render() -> None:
         key=STATE_KEYS["selected_repository_ids"],
     )
     if st.button("加入项目对比", type="primary", disabled=not 2 <= len(selected) <= 5):
-        st.switch_page("frontend/pages/comparison.py")
+        st.switch_page("pages/comparison.py")
 
     for repository in repositories:
         with st.container(border=True):
@@ -137,24 +141,34 @@ def render() -> None:
             details, refresh, deep, remove, task = st.columns(5)
             if details.button("查看详情", key=f"detail-{repository.repository_id}"):
                 st.session_state[STATE_KEYS["repository_id"]] = repository.repository_id
-                st.query_params["repository_id"] = str(repository.repository_id)
-                st.switch_page("frontend/pages/repository.py")
+                st.switch_page(
+                    "pages/repository.py",
+                    query_params={"repository_id": str(repository.repository_id)},
+                )
             if refresh.button("基础刷新", key=f"refresh-{repository.repository_id}"):
                 try:
-                    result = client.refresh_repository(repository.repository_id, depth="basic").data
+                    result = client.refresh_repository(
+                        repository.repository_id,
+                        depth="basic",
+                        idempotency_key=str(uuid4()),
+                    ).data
                     st.session_state[STATE_KEYS["task_id"]] = result.task_id
                     st.session_state[STATE_KEYS["task_poll_complete_for"]] = None
                     st.session_state[STATE_KEYS["task_poll_error_for"]] = None
-                    st.toast(f"基础刷新已{ '复用' if result.reused else '排队' }：{result.task_id}")
+                    st.toast(format_refresh_result(result, "基础刷新"))
                 except APIError as error:
                     render_api_error(error)
             if deep.button("深度采集", key=f"deep-{repository.repository_id}"):
                 try:
-                    result = client.refresh_repository(repository.repository_id, depth="deep").data
+                    result = client.refresh_repository(
+                        repository.repository_id,
+                        depth="deep",
+                        idempotency_key=str(uuid4()),
+                    ).data
                     st.session_state[STATE_KEYS["task_id"]] = result.task_id
                     st.session_state[STATE_KEYS["task_poll_complete_for"]] = None
                     st.session_state[STATE_KEYS["task_poll_error_for"]] = None
-                    st.toast(f"深度任务已{ '复用' if result.reused else '排队' }：{result.task_id}")
+                    st.toast(format_refresh_result(result, "深度采集"))
                 except APIError as error:
                     render_api_error(error)
             if remove.button("移除", key=f"remove-{repository.repository_id}"):
@@ -178,3 +192,6 @@ def render() -> None:
         if next_page.button("下一页", disabled=not pagination.has_next):
             st.session_state[STATE_KEYS["library_page"]] = pagination.page + 1
             st.rerun()
+
+
+render()

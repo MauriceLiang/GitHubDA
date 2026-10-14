@@ -1,0 +1,8 @@
+{
+  "data": {
+    "task_id": "11111111-2222-4333-8444-555555555555",
+    "reused": true,
+    "status": "succeeded"
+  },
+  "meta": {"request_id": "req_test_reused_refresh", "generated_at": "2026-10-14T00:00:00Z"}
+}
