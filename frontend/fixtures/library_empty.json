@@ -1,0 +1,15 @@
+{
+  "data": {
+    "items": []
+  },
+  "meta": {
+    "request_id": "req_mock_library_empty",
+    "generated_at": "2026-10-14T00:00:00Z",
+    "pagination": {
+      "page": 1,
+      "per_page": 20,
+      "total": 0,
+      "has_next": false
+    }
+  }
+}

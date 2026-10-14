@@ -81,7 +81,7 @@ class MockAPIClient(APIClient):
         self._active_demo_scenario = scenario
         self.scenarios = dict(DEFAULT_FIXTURES)
         self._custom_scenarios = set()
-        self._demo_task_status = scenario.removeprefix("task_") if scenario in {"task_failed", "task_partial"} else None
+        self._demo_task_status = scenario.removeprefix("task_") if scenario in {"task_failed", "task_partial", "task_progress"} else None
         self._retry_started = False
         self._task_detail_calls = 0
         if scenario == "github_limited":
@@ -99,6 +99,16 @@ class MockAPIClient(APIClient):
         elif scenario == "invalid_url":
             self.scenarios["resolve_repository"] = "resolve_invalid"
             self._custom_scenarios.add("resolve_repository")
+        elif scenario == "empty_library":
+            self.scenarios.update(
+                list_library="library_empty",
+                overview="overview_library_empty",
+                list_tasks="tasks_list_empty",
+            )
+            self._custom_scenarios.update({"list_library", "overview", "list_tasks"})
+        elif scenario == "task_progress":
+            self.scenarios["list_tasks"] = "tasks_list_progress"
+            self._custom_scenarios.add("list_tasks")
 
     def _replay_fixture(self, request: httpx.Request) -> httpx.Response:
         operation = self._operation_for_request(request)
@@ -142,15 +152,25 @@ class MockAPIClient(APIClient):
             repository_id = request.url.path.split("/")[4]
             if repository_id == "1362490" and operation == "repository_detail" and self._added and not self._collection_complete:
                 fixture_stem = "repository_detail_queued"
-            elif repository_id == "1362490" and operation == "repository_analysis" and self._added and not self._collection_complete:
-                fixture_stem = "analysis_missing"
-            elif repository_id == "724712":
+            elif repository_id == "1362490" and operation == "repository_analysis":
+                depth = parse_qs(request.url.query.decode("utf-8")).get("depth", ["basic"])[0]
+                if depth == "deep":
+                    if self._demo_task_status == "partial":
+                        fixture_stem = "analysis_deep_partial"
+                    elif self._demo_task_status == "failed":
+                        fixture_stem = "analysis_deep_failed"
+                    else:
+                        fixture_stem = "analysis_deep_done" if self._collection_complete else "analysis_deep_missing"
+                else:
+                    fixture_stem = "analysis_missing" if self._added and not self._collection_complete else "analysis_done"
+            elif repository_id == "724712" and operation == "repository_series":
                 metric = parse_qs(request.url.query.decode("utf-8")).get("metric", ["stars"])[0]
-                fixture_stem = {
-                    "repository_detail": "repository_detail_rust",
-                    "repository_analysis": "analysis_rust",
-                    "repository_series": f"series_rust_{metric}",
-                }[operation]
+                fixture_stem = f"series_rust_{metric}"
+            elif repository_id == "724712" and operation == "repository_detail":
+                fixture_stem = "repository_detail_rust"
+            elif repository_id == "724712" and operation == "repository_analysis":
+                depth = parse_qs(request.url.query.decode("utf-8")).get("depth", ["basic"])[0]
+                fixture_stem = "analysis_rust_deep" if depth == "deep" else "analysis_rust"
             elif operation == "repository_series":
                 metric = parse_qs(request.url.query.decode("utf-8")).get("metric", ["stars"])[0]
                 fixture_stem = "series_points" if metric == "stars" else f"series_points_{metric}"
@@ -193,6 +213,16 @@ class MockAPIClient(APIClient):
         except (OSError, json.JSONDecodeError):
             return self._missing_fixture_response(operation)
 
+        if operation == "list_tasks":
+            requested_status = parse_qs(request.url.query.decode("utf-8")).get("status", [None])[0]
+            if requested_status:
+                body.setdefault("data", {})["items"] = [
+                    item for item in body.get("data", {}).get("items", []) if item.get("status") == requested_status
+                ]
+                pagination = body.get("meta", {}).get("pagination")
+                if pagination is not None:
+                    pagination["total"] = len(body["data"]["items"])
+                    pagination["has_next"] = False
         status = FIXTURE_STATUSES.get(fixture_stem, 200)
         if fixture_stem == "github_limited":
             status = 429

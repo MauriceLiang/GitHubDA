@@ -1,4 +1,4 @@
-"""Shared empty, error, and provenance presentation helpers."""
+"""Shared error and source metadata helpers."""
 
 from __future__ import annotations
 
@@ -26,13 +26,14 @@ def render_provenance(metadata: SourceMetadata | None) -> None:
     if metadata.window_start and metadata.window_end:
         window = f"{_format_datetime(metadata.window_start)} 至 {_format_datetime(metadata.window_end)}"
     st.caption(
-        f"来源：{metadata.source} · 采集：{collected_at} · 样本 n={sample} · 数据集：{scope} · 窗口：{window} · 覆盖：{metadata.coverage}"
+        f"来源：{metadata.source} · 采集：{collected_at} · 样本 n={sample} · 数据集：{scope} · "
+        f"窗口：{window} · 覆盖：{metadata.coverage}"
     )
     for note in metadata.notes:
         st.caption(note)
 
 
-def display_value(value: int | float | str | None, *, missing: str = "未知") -> int | float | str:
+def display_value(value: int | float | str | None, *, missing: str = "—") -> int | float | str:
     return missing if value is None else value
 
 
@@ -44,7 +45,7 @@ def format_refresh_result(result: RefreshTaskData, operation: str) -> str:
     status_labels = {
         "queued": "排队中",
         "running": "运行中",
-        "succeeded": "已完成",
+        "succeeded": "已结束",
         "partial": "部分完成",
     }
     status = status_labels[result.status]

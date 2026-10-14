@@ -164,6 +164,17 @@ class RepositorySeriesData(ContractModel):
     note: str | None = None
 
 
+class TaskModuleProgress(ContractModel):
+    name: Literal["profile", "commits", "issues", "pulls", "releases"]
+    status: Literal["pending", "running", "complete", "partial", "failed", "skipped"]
+    coverage: Literal["complete", "partial", "not_collected", "unknown"]
+    pages_fetched: int = Field(default=0, ge=0)
+    page_cap: int | None = Field(default=None, ge=1)
+    observed_items: int = Field(default=0, ge=0)
+    elapsed_seconds: float | None = Field(default=None, ge=0)
+    error_code: str | None = None
+
+
 class Task(ContractModel):
     task_id: str
     repository_id: int
@@ -178,6 +189,12 @@ class Task(ContractModel):
     started_at: datetime | None
     finished_at: datetime | None
     error: dict[str, Any] | None
+    progress_kind: Literal["stages", "unknown"] = "unknown"
+    progress_updated_at: datetime | None = None
+    current_module: Literal["profile", "commits", "issues", "pulls", "releases"] | None = None
+    modules: list[TaskModuleProgress] = Field(default_factory=list)
+    elapsed_seconds: float | None = Field(default=None, ge=0)
+    eta_seconds: float | None = Field(default=None, ge=0)
 
 
 class TaskListData(ContractModel):

@@ -1,0 +1,38 @@
+{
+  "data": {
+    "repository_id": 724712,
+    "depth": "deep",
+    "analysis_status": "not_started",
+    "metrics": null,
+    "modules": {
+      "profile": {
+        "coverage": "complete"
+      },
+      "activity": {
+        "coverage": "not_collected"
+      },
+      "community": {
+        "coverage": "not_collected"
+      }
+    },
+    "source_metadata": {
+      "source": "GitHub REST API",
+      "collected_at": null,
+      "window_start": null,
+      "window_end": null,
+      "sample_size": 0,
+      "dataset_id": null,
+      "coverage": "not_collected",
+      "notes": [
+        "深度活动指标未采集"
+      ]
+    },
+    "limitations": [
+      "关注度指标不等于代码质量"
+    ]
+  },
+  "meta": {
+    "request_id": "req_mock_analysis_rust_deep",
+    "generated_at": "2026-10-14T01:00:00Z"
+  }
+}

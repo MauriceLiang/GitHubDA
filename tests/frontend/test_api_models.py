@@ -46,6 +46,9 @@ def test_queued_attempt_zero_and_cached_refresh_terminal_status_are_accepted():
     ).data
 
     assert task.attempt == 0
+    assert task.progress_kind == "unknown"
+    assert task.modules == []
+    assert task.eta_seconds is None
     assert refresh.reused is True
     assert refresh.status == "succeeded"
 
@@ -70,3 +73,24 @@ def test_contract_still_rejects_missing_fields_and_unknown_values():
     refresh["data"]["status"] = "cached"
     with pytest.raises(ValidationError):
         TypeAdapter(APIEnvelope[RefreshTaskData]).validate_python(refresh)
+
+
+def test_v2_task_progress_fields_are_validated_and_preserved():
+    task = TypeAdapter(APIEnvelope[Task]).validate_python(load_fixture("task_progress.json")).data
+
+    assert task.progress_kind == "stages"
+    assert task.current_module == "pulls"
+    assert task.progress_percent == 38
+    assert task.eta_seconds is None
+    assert [(module.name, module.status) for module in task.modules] == [
+        ("profile", "complete"),
+        ("commits", "complete"),
+        ("issues", "complete"),
+        ("pulls", "running"),
+        ("releases", "pending"),
+    ]
+
+    invalid = load_fixture("task_progress.json")
+    invalid["data"]["modules"][0]["pages_fetched"] = -1
+    with pytest.raises(ValidationError):
+        TypeAdapter(APIEnvelope[Task]).validate_python(invalid)
