@@ -1,0 +1,18 @@
+{
+  "data": {
+    "task_id": "11111111-2222-4333-8444-555555555555",
+    "repository_id": 1362490,
+    "type": "collect_repository",
+    "depth": "basic",
+    "status": "running",
+    "phase": "cleaning",
+    "progress_percent": null,
+    "message": "正在规范化仓库字段",
+    "attempt": 1,
+    "created_at": "2026-10-13T10:30:00Z",
+    "started_at": "2026-10-13T10:30:03Z",
+    "finished_at": null,
+    "error": null
+  },
+  "meta": {"request_id": "req_mock_task", "generated_at": "2026-10-13T10:30:10Z"}
+}

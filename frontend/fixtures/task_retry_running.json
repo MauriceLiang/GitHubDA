@@ -1,0 +1,18 @@
+{
+  "data": {
+    "task_id": "33333333-4444-4555-8666-777777777777",
+    "repository_id": 1362490,
+    "type": "collect_repository",
+    "depth": "basic",
+    "status": "running",
+    "phase": "collecting",
+    "progress_percent": null,
+    "message": "重试任务正在采集",
+    "attempt": 2,
+    "created_at": "2026-10-13T10:32:00Z",
+    "started_at": "2026-10-13T10:32:03Z",
+    "finished_at": null,
+    "error": null
+  },
+  "meta": {"request_id": "req_mock_retry_running", "generated_at": "2026-10-13T10:32:03Z"}
+}

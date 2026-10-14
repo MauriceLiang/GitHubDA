@@ -1,6 +1,8 @@
 from typing import Any, Literal
 
-from backend.app.schemas.common import DTO
+from pydantic import Field
+
+from backend.app.schemas.common import DTO, SourceMetadata
 
 
 class ItemListResponse(DTO):
@@ -43,7 +45,7 @@ class OverviewResponse(DTO):
     kpis: dict[str, Any]
     language_distribution: list[dict[str, Any]]
     stars_distribution: list[dict[str, Any]]
-    source_metadata: dict[str, Any]
+    source_metadata: SourceMetadata
 
 
 class StatisticsResponse(DTO):
@@ -53,15 +55,26 @@ class StatisticsResponse(DTO):
     summary: dict[str, Any]
     groups: list[dict[str, Any]]
     correlations: list[dict[str, Any]]
-    source_metadata: dict[str, Any]
+    source_metadata: SourceMetadata
+
+
+class MissingFieldResponse(DTO):
+    field: str
+    count: int = Field(ge=0)
+    rate: float | None = Field(ge=0, le=1)
+
+
+class ExcludedByReasonResponse(DTO):
+    reason: str
+    count: int = Field(ge=0)
 
 
 class DataQualityResponse(DTO):
     dataset_id: str
     records_total: int
     records_analyzable: int
-    missing_fields: list[dict[str, Any]]
-    excluded_by_reason: list[dict[str, Any]]
+    missing_fields: list[MissingFieldResponse]
+    excluded_by_reason: list[ExcludedByReasonResponse]
     stale_count: int
     sampling_rules_version: str | None
     coverage_notes: list[str]

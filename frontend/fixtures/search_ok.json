@@ -1,0 +1,25 @@
+{
+  "data": {
+    "items": [
+      {
+        "repository_id": 1362490,
+        "full_name": "psf/requests",
+        "html_url": "https://github.com/psf/requests",
+        "description": "Python HTTP client",
+        "language": "Python",
+        "stars": 54599,
+        "forks": 12662,
+        "archived": false,
+        "is_fork": false,
+        "already_in_library": false,
+        "github_updated_at": "2026-10-13T08:52:27Z"
+      }
+    ]
+  },
+  "meta": {
+    "request_id": "req_mock_search",
+    "generated_at": "2026-10-13T10:30:00Z",
+    "pagination": {"page": 1, "per_page": 20, "has_next": true},
+    "search": {"total_count": 126, "incomplete_results": false, "result_window_limit": 1000}
+  }
+}

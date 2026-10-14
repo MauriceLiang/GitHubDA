@@ -2,7 +2,7 @@ from typing import Any, Literal
 
 from pydantic import Field, field_validator
 
-from backend.app.schemas.common import DTO
+from backend.app.schemas.common import DTO, SourceMetadata
 
 
 class RepositoryPreview(DTO):
@@ -43,7 +43,7 @@ class RepositoryDetail(DTO):
     license_spdx: str | None
     size_kb: int | None
     open_issues_and_pr_count: int | None
-    source_metadata: dict[str, Any] | None
+    source_metadata: SourceMetadata | None
 
 
 class ResolveRequest(DTO):
@@ -71,7 +71,7 @@ class RefreshRequest(DTO):
 class RefreshResponse(DTO):
     task_id: str
     reused: bool
-    status: str
+    status: Literal["queued", "running", "succeeded", "partial"]
 
 
 class AnalysisResponse(DTO):
@@ -80,7 +80,7 @@ class AnalysisResponse(DTO):
     analysis_status: str
     metrics: dict[str, Any] | None
     modules: dict[str, Any]
-    source_metadata: dict[str, Any] | None
+    source_metadata: SourceMetadata | None
     limitations: list[str]
 
 

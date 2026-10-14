@@ -77,8 +77,11 @@ Worker 对基础仓库档案采集真实快照。深度采集限定在近期窗�
 ## 验证与诊断
 
 ```bash
-pytest
+python -m compileall -q backend frontend migrations scripts tests
+python -m pytest -p no:cacheprovider tests/backend -q
 python -m scripts.check_data_integrity
 ```
+
+做本地集成验收前，将 `DATABASE_URL`、`RAW_DATA_DIR` 和随机 `INTERNAL_API_KEY` 配置到本地环境；API 与 Worker 必须使用相同配置。临时数据库先运行 `alembic upgrade head`，再分别启动 API 和 Worker。确认 `/healthz` 返回 200 后，带 `X-Internal-Api-Key` 请求 `/api/v1/datasets` 与 `/api/v1/system/status`。真实 GitHub 冒烟可通过 `/api/v1/github/resolve` 查询一个公开仓库，再添加到分析库并轮询任务；记录 `X-Request-ID`、任务终态和 coverage，勿将 Token、内部 Key、测试数据库或原始归档提交到仓库。
 
 `GET /api/v1/system/status` 读取数据库、Worker 心跳、队列和 GitHub 最近一次限额缓存；它不会为了状态查询消耗 GitHub 配额。`GET /repositories/{id}` 只读取本地数据库，因此 GitHub 暂时不可用时仍能展示最近一次成功结果。

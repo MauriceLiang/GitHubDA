@@ -1,0 +1,1 @@
+"""GitHubDA Streamlit frontend."""

@@ -1,0 +1,8 @@
+{
+  "data": {
+    "task_id": "33333333-4444-4555-8666-777777777777",
+    "retry_of": "55555555-6666-4777-8888-999999999999",
+    "status": "queued"
+  },
+  "meta": {"request_id": "req_mock_retry_partial", "generated_at": "2026-10-13T10:32:00Z"}
+}

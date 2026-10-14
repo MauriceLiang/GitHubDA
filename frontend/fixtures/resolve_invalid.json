@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "INVALID_REPOSITORY_URL",
+    "message": "仓库地址格式不正确，请使用 github.com 仓库链接或 owner/repo",
+    "details": {"field": "input"}
+  },
+  "request_id": "req_mock_invalid_repository_url"
+}

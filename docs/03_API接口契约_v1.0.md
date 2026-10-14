@@ -41,6 +41,7 @@
 | `depth` | enum | `basic` / `deep`；基础分析无需遍历完整历史事件 |
 | `data_status` | enum | `missing` / `fresh` / `stale`，由成功采集时间与 TTL 推导，独立于任务状态 |
 | `task.status` | enum | `queued` / `running` / `succeeded` / `partial` / `failed` / `cancelled` |
+| `task.attempt` | integer | 非负整数；新建队列任务为 0，Worker 每次认领后递增 |
 | `task.phase` | enum/null | `collecting` / `cleaning` / `analyzing` / `persisting`，仅执行中展示 |
 | `analysis_status` | enum | `not_started` / `queued` / `processing` / `completed` / `partial` / `failed` |
 | `coverage` | enum | `complete` / `partial` / `not_collected`；历史事件分页未取全不得假称完整 |
@@ -169,6 +170,7 @@
 ```
 
 进度百分比无法可靠计算时必须为 null，前端用不定进度提示而非虚假百分比。
+新创建或重试产生的排队任务 `attempt=0`；Worker 认领后变为 `running` 且 `attempt=1`。租约过期后重新认领继续递增；重试始终创建新的任务 ID，并从 0 开始计数。
 
 ### 3.4 `SourceMetadata`（分析可信度元信息）
 
@@ -184,6 +186,8 @@
   "notes": ["开源项目样本，不代表 GitHub 全体仓库"]
 }
 ```
+
+`collected_at` 为 UTC ISO 8601 时间或 `null`。空数据集、尚无成功采集记录时必须返回 `null`，不得用请求时间代替；`window_start`、`window_end` 在没有分析窗口时也为 `null`。`sample_size` 为非负整数或 `null`。
 
 ## 4. 接口目录（v1 必须实现）
 
@@ -317,6 +321,7 @@
 请求：`{"depth":"basic","force":false}`。
 
 - 202：`data = {"task_id":"...","reused":false,"status":"queued"}`。
+- `status` 枚举为 `queued|running|succeeded|partial`。命中近期有效 basic 缓存时可以返回终态 `succeeded` 或 `partial`，并设 `reused=true`；强制刷新忽略新鲜缓存，但仍遵守同仓库活动任务去重。
 - 若已有运行中同级或更深任务且 `force:false`，`202 reused:true` 返回已有 task ID；不得并行创建两个同仓库的相同任务。
 - `force:true` 仅表示忽略新鲜缓存、**不绕过**限流，也不与同仓库执行中的任务冲突；已有任务时仍复用。
 - 404 仓库不存在。
@@ -354,6 +359,8 @@
 
 - age_days、days_since_push 根据 UTC `collected_at` 与对应时间计算，不使用浏览器当前时间重算静态分析结果。
 - 仅当前完成的模块可显示；深度数据缺失使用 null + `not_collected`，不能当 0。
+- deep 任务同时生成与本次快照同源时间的 basic profile 分析和 deep 活动分析；两者独立记录覆盖度，深度活动部分失败不能降低 basic profile 的覆盖度。
+- Worker 仅在 basic 任务且当前快照存在对应有效 basic 分析结果时发送 `If-None-Match`；匹配的 `304` 可复用历史结果且不创建新快照。deep 任务不发送 ETag，并必须实际执行深度采集；没有可复用结果却收到 `304` 时返回失败，不能将任务标记成功。
 - 没有可用分析结果时 `200` + `analysis_status:not_started|queued|processing`、`metrics:null`，前端引导等待，而不是 404。
 
 ### API-11 `GET /api/v1/repositories/{repository_id}/series`
@@ -384,7 +391,8 @@
 
 ### API-15 `GET /api/v1/datasets`
 
-- 200 `data.items=[{"dataset_id":"research-2026-v1","name":"开源软件研究样本 v1","type":"research","sample_size":400,"frozen_at":"2026-10-13T10:30:00Z","rules_version":"selection-v1"},{"dataset_id":"library-default","name":"我的分析库","type":"library","sample_size":23,"frozen_at":null,"rules_version":null}]`。
+- `type` 枚举为 `research|library|featured`。新安装创建 `research-2026-v1`、`library-default`、`featured-default` 三种数据集；默认成员数为 0，除非通过真实采样清单或人工维护流程导入成员。
+- 200 `data.items` 示例：`[{"dataset_id":"research-2026-v1","name":"开源软件研究样本 v1","type":"research","sample_size":0,"frozen_at":null,"rules_version":"selection-v1"},{"dataset_id":"library-default","name":"我的分析库","type":"library","sample_size":0,"frozen_at":null,"rules_version":null},{"dataset_id":"featured-default","name":"首页精选","type":"featured","sample_size":0,"frozen_at":null,"rules_version":null}]`。
 - 研究样本的 `sample_size` 指成员数，**不等于可用分析记录数**。
 
 ### API-16 `GET /api/v1/overview`
@@ -432,8 +440,8 @@
 ### API-18 `GET /api/v1/research/data-quality`
 
 - 必填 `dataset_id`（research）。
-- `200 data={"dataset_id":"research-2026-v1","records_total":400,"records_analyzable":365,"missing_fields":[{"field":"pushed_at","count":3,"rate":0.0075}],"excluded_by_reason":[{"reason":"resource_collection","count":8}],"stale_count":22,"sampling_rules_version":"selection-v1","coverage_notes":["研究对象为筛选后的高关注度仓库，不代表全量 GitHub"]}`。
-- 样本清洗排除理由必须可追溯，缺失率分母统一说明。
+- `200 data={"dataset_id":"research-2026-v1","records_total":0,"records_analyzable":0,"missing_fields":[{"field":"pushed_at","count":0,"rate":null}],"excluded_by_reason":[],"stale_count":0,"sampling_rules_version":"selection-v1","coverage_notes":["研究对象为筛选后的高关注度仓库，不代表全量 GitHub"]}`。
+- `missing_fields[].rate` 为 [0,1] 的比例或 `null`；研究数据集总成员数为 0 时分母为 0，比例必须返回 `null`，不能返回 0.0。样本清洗排除理由必须可追溯，缺失率分母统一使用总成员数。
 
 ### API-19 `POST /api/v1/comparisons`
 
