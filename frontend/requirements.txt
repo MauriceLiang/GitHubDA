@@ -3,3 +3,4 @@ streamlit==1.63.0
 httpx==0.28.1
 pydantic==2.13.5
 plotly==7.1.0
+python-dotenv==1.2.3

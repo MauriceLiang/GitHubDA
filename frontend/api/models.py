@@ -86,7 +86,7 @@ class RepositorySummary(ContractModel):
 
 class SourceMetadata(ContractModel):
     source: str
-    collected_at: datetime
+    collected_at: datetime | None
     window_start: datetime | None
     window_end: datetime | None
     sample_size: int | None = Field(ge=0)
@@ -123,7 +123,7 @@ class RepositoryDetailData(ContractModel):
 class RefreshTaskData(ContractModel):
     task_id: str
     reused: bool
-    status: Literal["queued", "running"]
+    status: Literal["queued", "running", "succeeded", "partial"]
 
 
 class AnalysisMetrics(ContractModel):
@@ -173,7 +173,7 @@ class Task(ContractModel):
     phase: TaskPhase | None
     progress_percent: float | None = Field(ge=0, le=100)
     message: str | None
-    attempt: int = Field(ge=1)
+    attempt: int = Field(ge=0)
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
@@ -214,7 +214,7 @@ class SystemStatusData(ContractModel):
 class Dataset(ContractModel):
     dataset_id: str
     name: str
-    type: Literal["research", "library"]
+    type: Literal["research", "library", "featured"]
     sample_size: int = Field(ge=0)
     frozen_at: datetime | None
     rules_version: str | None
@@ -288,7 +288,7 @@ class ResearchStatisticsData(ContractModel):
 class MissingField(ContractModel):
     field: str
     count: int = Field(ge=0)
-    rate: float = Field(ge=0, le=1)
+    rate: float | None = Field(ge=0, le=1)
 
 
 class ExcludedByReason(ContractModel):
@@ -303,7 +303,7 @@ class DataQualityData(ContractModel):
     missing_fields: list[MissingField]
     excluded_by_reason: list[ExcludedByReason]
     stale_count: int = Field(ge=0)
-    sampling_rules_version: str
+    sampling_rules_version: str | None
     coverage_notes: list[str]
 
 

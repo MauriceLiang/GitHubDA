@@ -52,8 +52,10 @@ def render() -> None:
         return
 
     kpis = overview.kpis
+    member_label = "数据集成员数" if scope == "research" else "分析库成员数"
+    member_scope = "数据集" if scope == "research" else "分析库"
     first, second, third, fourth = st.columns(4)
-    first.metric("仓库成员数", kpis.repositories_total)
+    first.metric(member_label, kpis.repositories_total)
     second.metric("已分析仓库", kpis.repositories_analyzed)
     third.metric("Star 中位数", "未知" if kpis.stars_median is None else f"{kpis.stars_median:,.1f}")
     fourth.metric(
@@ -64,7 +66,7 @@ def render() -> None:
     source_sample = overview.source_metadata.sample_size
     if source_sample is not None:
         st.caption(
-            f"样本成员 n={source_sample}；已分析 n={kpis.repositories_analyzed}。两者统计口径不同。"
+            f"有可用基础快照的成员 n={source_sample}；{member_scope}成员 n={kpis.repositories_total}。未采集成员不会计入前者。"
         )
     if not overview.language_distribution and not overview.stars_distribution:
         st.info("尚无可分析仓库。前往“仓库发现”添加项目。")
@@ -102,3 +104,6 @@ def render() -> None:
                     st.error("当前环境未安装 Plotly；请按 frontend/requirements.txt 安装依赖。")
 
     render_provenance(overview.source_metadata)
+
+
+render()

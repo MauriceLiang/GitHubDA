@@ -4,7 +4,7 @@ import streamlit as st
 
 from frontend.api.errors import APIError
 from frontend.api.factory import get_api_client
-from frontend.components.feedback import render_api_error
+from frontend.components.feedback import display_value, format_task_attempt, render_api_error
 from frontend.state.keys import STATE_KEYS
 
 
@@ -37,7 +37,9 @@ def _render_selected_task(task_id: str) -> None:
         "failed": "失败",
         "cancelled": "已取消",
     }
-    st.write(f"仓库 ID：{task.repository_id} · {status_labels[task.status]} · 尝试次数：{task.attempt}")
+    st.write(
+        f"仓库 ID：{task.repository_id} · {status_labels[task.status]} · 尝试次数：{format_task_attempt(task.attempt)}"
+    )
     st.caption(f"阶段：{task.phase or '—'} · {task.message or '无状态消息'}")
     if task.progress_percent is None:
         if task.status in {"queued", "running"}:
@@ -45,7 +47,33 @@ def _render_selected_task(task_id: str) -> None:
     else:
         st.progress(task.progress_percent / 100, text=f"{task.progress_percent:g}%")
     if task.error:
-        st.error(str(task.error.get("code") or task.error.get("message") or "任务失败"))
+        error_code = task.error.get("code")
+        if error_code:
+            st.error(f"{APIError(status_code=0, code=str(error_code)).user_message}（{error_code}）")
+        else:
+            st.error("任务失败，后端未提供可安全显示的错误说明。")
+
+    if task.status in {"succeeded", "partial"} and task.depth == "deep":
+        try:
+            analysis = client.repository_analysis(task.repository_id, depth="deep").data
+        except APIError as error:
+            st.warning(f"深度分析结果暂不可用：{error.user_message}")
+        else:
+            st.subheader("深度分析结果")
+            if analysis.metrics is None:
+                st.info("任务已结束，但深度指标尚未生成。")
+            else:
+                metrics = analysis.metrics
+                columns = st.columns(4)
+                columns[0].metric("近 90 天 Commit", display_value(metrics.commits_90d))
+                columns[1].metric("近一年 Release", display_value(metrics.release_count_365d))
+                columns[2].metric("关闭 Issue", display_value(metrics.issues_closed_90d))
+                columns[3].metric("合并 PR", display_value(metrics.pr_merged_90d))
+                st.caption(
+                    "深度结果状态："
+                    f"{status_labels.get(analysis.analysis_status, analysis.analysis_status)} · 覆盖："
+                    + "、".join(f"{name} {module.coverage}" for name, module in analysis.modules.items())
+                )
 
     if task.status in TERMINAL_TASK_STATUSES:
         st.session_state[STATE_KEYS["task_poll_complete_for"]] = task_id
@@ -129,6 +157,7 @@ def render() -> None:
                         "状态": task.status,
                         "阶段": task.phase or "—",
                         "进度": "未提供" if task.progress_percent is None else f"{task.progress_percent:g}%",
+                        "尝试次数": format_task_attempt(task.attempt),
                         "创建时间": task.created_at.isoformat(),
                         "失败码": (task.error or {}).get("code", "—"),
                     }
@@ -198,3 +227,6 @@ def render() -> None:
             file_name=export_payload.filename,
             mime=export_payload.content_type,
         )
+
+
+render()
