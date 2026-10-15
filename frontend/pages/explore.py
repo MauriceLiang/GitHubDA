@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from uuid import uuid4
 
 import streamlit as st
 
@@ -10,6 +9,7 @@ from frontend.api.factory import get_api_client
 from frontend.components.feedback import render_api_error
 from frontend.components.page_header import render_page_header
 from frontend.components.repository_row import render_repository_row
+from frontend.repository_flow import open_repository, start_repository_analysis
 from frontend.state.keys import STATE_KEYS
 
 
@@ -55,28 +55,12 @@ def _search(query: str, language: str, stars_min: int, sort: str, page: int) -> 
         render_api_error(error)
 
 
-def _open_repository(repository_id: int) -> None:
-    st.session_state[STATE_KEYS["repository_id"]] = repository_id
-    st.switch_page("pages/repository.py", query_params={"repository_id": str(repository_id)})
-
-
 def render() -> None:
     render_page_header(
         "发现仓库",
         "搜索公开 GitHub 仓库，或直接粘贴 owner/repo 和仓库链接。",
     )
     client, _ = get_api_client()
-    notice = st.session_state[STATE_KEYS["search_add_notice"]]
-    if notice:
-        if notice["membership_created"]:
-            st.success(f"{notice['full_name']} 已加入分析库；基础采集已提交。")
-        else:
-            st.info(f"{notice['full_name']} 已在分析库中，没有重复添加。")
-        if notice["task_id"]:
-            st.caption(f"最近任务：{status_text(notice['status'])}")
-            st.page_link("pages/operations.py", label="查看任务中心")
-        st.page_link("pages/library.py", label="打开我的分析库")
-
     with st.form("repository-search"):
         query = st.text_input(
             "GitHub 仓库",
@@ -103,11 +87,15 @@ def render() -> None:
                 format_func={"best_match": "最佳匹配", "stars": "Star", "updated": "最近更新"}.get,
                 key=STATE_KEYS["search_sort"],
             )
-        submitted = st.form_submit_button("搜索仓库", type="primary", width="stretch")
+        submitted = st.form_submit_button(
+            "搜索仓库",
+            key="repository-search-submit",
+            type="primary",
+            width="stretch",
+        )
 
     if submitted:
         st.session_state[STATE_KEYS["search_page"]] = 1
-        st.session_state[STATE_KEYS["search_add_notice"]] = None
         if not query.strip():
             st.warning("请输入关键词或仓库地址。")
             st.session_state[STATE_KEYS["search_results"]] = None
@@ -152,36 +140,19 @@ def render() -> None:
             with action:
                 if already_added:
                     if st.button("查看分析", key=f"explore-detail-{repository.repository_id}"):
-                        _open_repository(repository.repository_id)
+                        open_repository(repository.repository_id)
                 elif st.button(
-                    "添加分析库",
+                    "分析",
                     key=f"add-repository-{repository.repository_id}",
                     type="primary",
                 ):
                     try:
-                        added = client.add_repository(
-                            repository.full_name,
-                            auto_analyze=True,
-                            depth="basic",
-                            idempotency_key=str(uuid4()),
-                        ).data
+                        with st.spinner("正在准备基础分析…"):
+                            start = start_repository_analysis(client, repository)
                     except APIError as error:
                         render_api_error(error)
                     else:
-                        added_ids = st.session_state[STATE_KEYS["added_repository_ids"]]
-                        if repository.repository_id not in added_ids:
-                            st.session_state[STATE_KEYS["added_repository_ids"]] = [*added_ids, repository.repository_id]
-                        if added.task_id:
-                            st.session_state[STATE_KEYS["task_id"]] = added.task_id
-                            st.session_state[STATE_KEYS["task_poll_complete_for"]] = None
-                            st.session_state[STATE_KEYS["task_poll_error_for"]] = None
-                        st.session_state[STATE_KEYS["search_add_notice"]] = {
-                            "full_name": repository.full_name,
-                            "membership_created": added.membership_created,
-                            "status": added.analysis_status,
-                            "task_id": added.task_id,
-                        }
-                        st.rerun()
+                        open_repository(start)
 
     pagination = results["pagination"]
     if pagination and (pagination.page > 1 or pagination.has_next):
@@ -197,17 +168,5 @@ def render() -> None:
             st.session_state[STATE_KEYS["search_page"]] = new_page
             _search(query, language, int(stars_min), sort, new_page)
             st.rerun()
-
-
-def status_text(status: str) -> str:
-    return {
-        "not_started": "等待采集",
-        "queued": "已排队",
-        "processing": "正在采集",
-        "completed": "基础分析已完成",
-        "partial": "部分完成",
-        "failed": "失败",
-    }.get(status, "等待状态更新")
-
 
 render()

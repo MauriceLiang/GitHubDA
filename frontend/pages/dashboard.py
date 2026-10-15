@@ -12,7 +12,9 @@ from frontend.components.empty_state import render_empty_state
 from frontend.components.feedback import display_value, render_api_error
 from frontend.components.metadata_panel import render_metadata_panel
 from frontend.components.page_header import render_page_header
+from frontend.components.repository_input import render_repository_input
 from frontend.components.status_indicator import status_label
+from frontend.repository_flow import open_repository, start_repository_analysis
 from frontend.state.keys import STATE_KEYS
 
 
@@ -20,11 +22,6 @@ def _format_datetime(value: datetime | None) -> str:
     return value.astimezone().strftime("%Y-%m-%d") if value and value.tzinfo else (
         value.date().isoformat() if value else "—"
     )
-
-
-def _open_repository(repository_id: int) -> None:
-    st.session_state[STATE_KEYS["repository_id"]] = repository_id
-    st.switch_page("pages/repository.py", query_params={"repository_id": str(repository_id)})
 
 
 def _open_task(task_id: str) -> None:
@@ -35,23 +32,35 @@ def _open_task(task_id: str) -> None:
 
 def render() -> None:
     render_page_header(
-        "工作台",
-        "从分析库查看最近状态，或搜索一个公开仓库开始分析。",
+        "分析任何公开 GitHub 仓库",
+        "输入 owner/repo 或仓库链接，开始基础分析并直接查看结果。",
     )
     client, _ = get_api_client()
+    repository_input, submitted = render_repository_input()
+    st.page_link("pages/explore.py", label="更多筛选 / 搜索项目")
+    if submitted:
+        if not repository_input.strip():
+            st.error("请输入 GitHub 仓库地址或 owner/repo。")
+        else:
+            try:
+                with st.spinner("正在验证仓库并准备基础分析…"):
+                    preview = client.resolve_repository(repository_input.strip()).data
+                    start = start_repository_analysis(client, preview)
+            except APIError as error:
+                render_api_error(error)
+            else:
+                open_repository(start)
+
     try:
-        library = client.list_library(page=1, per_page=10, sort="last_collected", order="desc")
+        library = client.list_library(page=1, per_page=5, sort="last_collected", order="desc")
     except APIError as error:
         render_api_error(error)
         return
 
     if not library.data.items and (library.meta.pagination is None or library.meta.pagination.total in {None, 0}):
         render_empty_state(
-            "分析库还没有仓库",
-            "把公开仓库加入分析库后，就能在这里查看基础指标、采集状态和比较结果。",
-            action_label="搜索并添加仓库",
-            target="pages/explore.py",
-            steps=("搜索仓库", "加入分析库", "查看分析结果"),
+            "最近仓库",
+            "分析库还没有仓库。使用上方输入框开始分析；也可以先搜索候选项目。",
         )
         return
 
@@ -101,9 +110,6 @@ def render() -> None:
                 left.caption(task.message)
             if right.button("查看", key=f"dashboard-task-{task.task_id}"):
                 _open_task(task.task_id)
-    else:
-        st.caption("当前没有排队或运行中的任务。")
-
     if library.data.items:
         st.subheader("最近仓库")
         for repository in library.data.items[:5]:
@@ -115,7 +121,7 @@ def render() -> None:
                 f"{status_label(repository.analysis_status)}"
             )
             if right.button("查看分析", key=f"dashboard-repository-{repository.repository_id}"):
-                _open_repository(repository.repository_id)
+                open_repository(repository.repository_id)
 
     distributions = overview.language_distribution or overview.stars_distribution
     if distributions:
