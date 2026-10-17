@@ -228,7 +228,7 @@ def test_all_v1_routes_are_present_in_openapi():
         "/api/v1/repositories/{repository_id}/analysis", "/api/v1/repositories/{repository_id}/series",
         "/api/v1/tasks", "/api/v1/tasks/{task_id}", "/api/v1/tasks/{task_id}/retry", "/api/v1/datasets",
         "/api/v1/overview", "/api/v1/research/statistics", "/api/v1/research/data-quality",
-        "/api/v1/comparisons", "/api/v1/exports/repositories.csv",
+        "/api/v1/comparisons", "/api/v1/exports/repositories.csv", "/api/v1/exports/comparison.csv",
     }
     assert expected <= set(paths)
     assert paths["/api/v1/github/search"]["get"]["responses"]["422"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/ErrorResponse"

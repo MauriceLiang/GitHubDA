@@ -24,7 +24,7 @@ cp .env.example .env
 uv run --locked --all-extras python -m scripts.start
 ```
 
-它会自动升级数据库，并依次启动 API、Worker 和 Streamlit 前端。首次运行会创建 `.env` 并生成本机随机 `INTERNAL_API_KEY`；访问地址和局域网设置见 [README.md](README.md)。
+它会先构建 Vue 前端，再自动升级数据库并启动 API 与 Worker。首次运行会创建 `.env` 并生成本机随机 `INTERNAL_API_KEY`；完整访问地址见 [README.md](README.md)。新前端仅允许绑定本机回环地址。
 
 需要单独调试后端时，可手动运行迁移并分别启动 API 与 Worker：
 
@@ -37,11 +37,11 @@ alembic upgrade head
 分别启动 API 与 Worker：
 
 ```bash
-python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8501
 python -m backend.app.worker.main
 ```
 
-健康检查为 `GET /healthz`。其余 `/api/v1/*` 请求须带 `X-Internal-Api-Key`。`/docs` 和 `/openapi.json` 用于本机联调，服务默认只绑定回环地址。
+健康检查为 `GET /healthz`。其余 `/api/v1/*` 请求须带 `X-Internal-Api-Key`。`/api/browser/*` 是给同源 Vue 前端使用的本机会话入口；密钥不会下发到浏览器。`/docs` 和 `/openapi.json` 用于本机联调，服务默认只绑定回环地址。
 
 ## 研究样本
 
@@ -87,7 +87,7 @@ Worker 对基础仓库档案采集真实快照。深度采集限定在近期窗�
 ## 验证与诊断
 
 ```bash
-python -m compileall -q backend frontend migrations scripts tests
+python -m compileall -q backend migrations scripts tests
 python -m pytest -p no:cacheprovider tests/backend -q
 python -m scripts.check_data_integrity
 ```

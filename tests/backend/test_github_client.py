@@ -5,6 +5,15 @@ from backend.app.core.exceptions import AppError
 from backend.app.integrations.github.client import GITHUB_API, GitHubClient, PageObservation, parse_repository_input
 
 
+def test_client_initializes_with_socks_proxy_environment(monkeypatch):
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ALL_PROXY", "socks5h://127.0.0.1:1080")
+
+    client = GitHubClient()
+    client.close()
+
+
 @pytest.mark.parametrize("value", ["https://github.com.evil.test/owner/repo", "https://user@github.com/owner/repo", "https://github.com:8443/owner/repo", "https://github.com/owner/repo/issues"])
 def test_resolve_rejects_non_repository_urls(value):
     with pytest.raises(AppError) as error:

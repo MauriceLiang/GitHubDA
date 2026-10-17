@@ -1,8 +1,0 @@
-{
-  "error": {
-    "code": "GITHUB_RATE_LIMITED",
-    "message": "GitHub 请求暂时受限，请稍后重试",
-    "details": {"retry_after_seconds": 120}
-  },
-  "request_id": "req_mock_rate_limit"
-}

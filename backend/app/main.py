@@ -1,15 +1,18 @@
 import logging
 import secrets
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.app.api.v1 import router as v1_router
+from backend.app.api.browser import router as browser_router
 from backend.app.core.exceptions import AppError
 from backend.app.persistence.db import SessionLocal
 from backend.app.schemas.common import ErrorResponse
@@ -91,6 +94,29 @@ def healthz():
 
 
 app.include_router(v1_router)
+app.include_router(browser_router)
+
+WEB_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
+WEB_INDEX = WEB_DIST / "index.html"
+if WEB_INDEX.is_file():
+    assets_dir = WEB_DIST / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="web-assets")
+
+    @app.get("/", include_in_schema=False)
+    def web_index():
+        return FileResponse(WEB_INDEX, headers={"Cache-Control": "no-cache"})
+
+    @app.get("/{path:path}", include_in_schema=False)
+    def web_route(path: str):
+        candidate = (WEB_DIST / path).resolve()
+        if candidate.is_relative_to(WEB_DIST.resolve()) and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(WEB_INDEX, headers={"Cache-Control": "no-cache"})
+else:
+    @app.get("/", include_in_schema=False)
+    def web_not_built():
+        return {"status": "ok", "ui": "Vue assets are not built", "command": "cd web && npm ci && npm run build"}
 
 
 def custom_openapi():

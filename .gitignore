@@ -5,5 +5,12 @@ __pycache__/
 data/*
 !data/.gitkeep
 *.py[cod]
-docs
+docs/*
+!docs/ux/
+docs/ux/*
+!docs/ux/v22-progress.md
 .idea
+web/node_modules/
+web/dist/
+web/playwright-report/
+web/test-results/
