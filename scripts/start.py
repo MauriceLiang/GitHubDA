@@ -1,8 +1,9 @@
-"""Start the API, worker, and Streamlit UI as one local stack."""
+"""Build the Vue UI and start the API and worker as one local stack."""
 
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import secrets
@@ -22,6 +23,7 @@ from dotenv import dotenv_values, set_key
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_FILE = PROJECT_ROOT / ".env"
 ENV_EXAMPLE = PROJECT_ROOT / ".env.example"
+FRONTEND_DIR = PROJECT_ROOT / "githubda-ui-prototype"
 SAMPLE_API_KEY = "replace-with-a-long-random-local-secret"
 SERVICE_START_TIMEOUT_SECONDS = 30
 WORKER_START_TIMEOUT_SECONDS = 30
@@ -44,17 +46,26 @@ def ensure_api_key() -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="一键启动 GitHubDA API、Worker 和 Streamlit 前端")
-    parser.add_argument("--api-host", default="127.0.0.1", help="FastAPI 监听地址，默认仅本机可访问")
-    parser.add_argument("--api-port", type=int, default=8000, help="FastAPI 端口，默认 8000")
-    parser.add_argument("--frontend-host", default="127.0.0.1", help="Streamlit 监听地址，默认仅本机可访问")
-    parser.add_argument("--frontend-port", type=int, default=8501, help="Streamlit 端口，默认 8501")
+    parser = argparse.ArgumentParser(description="构建 Vue 前端并启动 GitHubDA API 与 Worker")
+    parser.add_argument("--host", "--api-host", "--frontend-host", dest="host", default="127.0.0.1", help="应用监听地址，只允许本机回环地址")
+    parser.add_argument("--port", "--api-port", "--frontend-port", dest="port", type=int, default=8501, help="应用地址端口，默认 8501")
     return parser.parse_args()
 
 
 def run_migrations() -> None:
     print("正在检查并升级数据库结构…", flush=True)
     subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=PROJECT_ROOT, check=True)
+
+
+def build_frontend() -> None:
+    npm = shutil.which("npm")
+    if not npm:
+        raise RuntimeError("未找到 npm。请安装 Node.js，然后在 githubda-ui-prototype 目录运行 npm ci。")
+    if not (FRONTEND_DIR / "node_modules" / ".bin" / "vite").exists():
+        print("正在安装 Vue 前端依赖…", flush=True)
+        subprocess.run([npm, "ci", "--no-audit", "--no-fund"], cwd=FRONTEND_DIR, check=True)
+    print("正在构建 Vue 前端…", flush=True)
+    subprocess.run([npm, "run", "build"], cwd=FRONTEND_DIR, check=True)
 
 
 def start_process(name: str, command: list[str], env: dict[str, str]) -> subprocess.Popen[bytes]:
@@ -137,6 +148,13 @@ def stop_processes(processes: list[tuple[str, subprocess.Popen[bytes]]]) -> None
 
 def main() -> int:
     args = parse_args()
+    try:
+        bind_address = ipaddress.ip_address(args.host)
+    except ValueError:
+        bind_address = None
+    if bind_address is None or not bind_address.is_loopback:
+        print("GitHubDA 新前端仅支持绑定本机回环地址（127.0.0.1）。", file=sys.stderr, flush=True)
+        return 2
     stop = threading.Event()
     processes: list[tuple[str, subprocess.Popen[bytes]]] = []
     failed = False
@@ -148,12 +166,13 @@ def main() -> int:
     signal.signal(signal.SIGTERM, request_stop)
 
     try:
+        build_frontend()
         ensure_api_key()
         run_migrations()
 
         child_env = os.environ.copy()
         child_env["PYTHONUNBUFFERED"] = "1"
-        api_url = f"http://127.0.0.1:{args.api_port}"
+        api_url = f"http://127.0.0.1:{args.port}"
         api = start_process(
             "FastAPI",
             [
@@ -162,9 +181,9 @@ def main() -> int:
                 "uvicorn",
                 "backend.app.main:app",
                 "--host",
-                args.api_host,
+                args.host,
                 "--port",
-                str(args.api_port),
+                str(args.port),
             ],
             child_env,
         )
@@ -181,34 +200,9 @@ def main() -> int:
         api_key = os.environ.get("INTERNAL_API_KEY") or dotenv_values(ENV_FILE).get("INTERNAL_API_KEY") or ""
         wait_for_worker(api, worker, api_url, api_key, stop)
 
-        frontend_env = child_env.copy()
-        frontend_env["API_BASE_URL"] = api_url
-        frontend = start_process(
-            "Streamlit",
-            [
-                sys.executable,
-                "-m",
-                "streamlit",
-                "run",
-                "frontend/app.py",
-                "--server.address",
-                args.frontend_host,
-                "--server.port",
-                str(args.frontend_port),
-                "--server.headless",
-                "true",
-            ],
-            frontend_env,
-        )
-        processes.append(("Streamlit", frontend))
-        wait_for_http(
-            "Streamlit",
-            f"http://127.0.0.1:{args.frontend_port}/",
-            frontend,
-            stop,
-        )
+        wait_for_http("Vue 前端", f"{api_url}/", api, stop)
 
-        print(f"GitHubDA 已启动：前端 http://127.0.0.1:{args.frontend_port}，API {api_url}/docs", flush=True)
+        print(f"GitHubDA 已启动：前端 {api_url}，API 文档 {api_url}/docs", flush=True)
         while not stop.wait(0.25):
             for name, process in processes:
                 return_code = process.poll()

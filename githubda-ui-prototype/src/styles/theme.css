@@ -1,0 +1,115 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------- design tokens (see docs/DESIGN_SYSTEM.md) ---------- */
+:root {
+  --gd-bg: #fafafa;
+  --gd-panel: #ffffff;
+  --gd-ink: #0a0a0a;
+  --gd-muted: #737373;
+  --gd-border: #e5e5e5;
+  --gd-soft: #f2f2f3;
+  --gd-track: #f4f4f5;
+  --gd-grid: #ebebed;
+  --gd-warn-bg: #faf2e3;
+  --gd-warn-fg: #8a5a12;
+  --gd-danger: #c0392b;
+  --gd-s1: #e2683c;
+  --gd-s2: #e5a03a;
+  --gd-s3: #ce3f7c;
+  --gd-s4: #2e8fcb;
+  --gd-s5: #3b5bdb;
+  --gd-heat-0: #ebedf0;
+  --gd-heat-1: #9be9a8;
+  --gd-heat-2: #40c463;
+  --gd-heat-3: #30a14e;
+  --gd-heat-4: #216e39;
+  --gd-shadow: 0 6px 18px rgb(0 0 0 / 0.12);
+}
+
+.dark {
+  --gd-bg: #0b0b0c;
+  --gd-panel: #151518;
+  --gd-ink: #f5f5f5;
+  --gd-muted: #a1a1aa;
+  --gd-border: #2a2a2e;
+  --gd-soft: #232327;
+  --gd-track: #202024;
+  --gd-grid: #2b2b30;
+  --gd-warn-bg: #2a2213;
+  --gd-warn-fg: #e3b568;
+  --gd-danger: #f2777a;
+  --gd-s1: #f5a183;
+  --gd-s2: #f2c67d;
+  --gd-s3: #f294c2;
+  --gd-s4: #7fc6e8;
+  --gd-s5: #93aeff;
+  --gd-heat-0: #1b1f24;
+  --gd-heat-1: #0e4429;
+  --gd-heat-2: #006d32;
+  --gd-heat-3: #26a641;
+  --gd-heat-4: #39d353;
+  --gd-shadow: 0 8px 24px rgb(0 0 0 / 0.5);
+}
+
+@theme inline {
+  --color-bg: var(--gd-bg);
+  --color-panel: var(--gd-panel);
+  --color-ink: var(--gd-ink);
+  --color-muted: var(--gd-muted);
+  --color-line: var(--gd-border);
+  --color-soft: var(--gd-soft);
+  --color-track: var(--gd-track);
+  --color-warnbg: var(--gd-warn-bg);
+  --color-warnfg: var(--gd-warn-fg);
+  --color-danger: var(--gd-danger);
+  --color-s1: var(--gd-s1);
+  --color-s2: var(--gd-s2);
+  --color-s3: var(--gd-s3);
+  --color-s4: var(--gd-s4);
+  --color-s5: var(--gd-s5);
+  --font-sans: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --radius-card: 10px;
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-bg text-ink font-sans antialiased;
+    font-size: 13.5px;
+    margin: 0;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--gd-s1) 22%, transparent);
+  }
+  button {
+    font: inherit;
+    color: inherit;
+  }
+  :focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--gd-ink) 30%, transparent);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .gd-card {
+    @apply bg-panel border border-line rounded-[10px] flex flex-col gap-3.5 min-w-0;
+  }
+  .gd-label {
+    @apply text-[11.5px] text-muted;
+  }
+  .gd-mono {
+    @apply font-mono tabular-nums;
+  }
+  .gd-link {
+    @apply inline-flex items-center gap-1 font-medium underline decoration-[#d8d8d8] underline-offset-[3px] hover:decoration-ink dark:decoration-[#3f3f46];
+  }
+}

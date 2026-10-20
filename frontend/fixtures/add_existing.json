@@ -1,9 +1,0 @@
-{
-  "data": {
-    "repository_id": 1362490,
-    "membership_created": false,
-    "analysis_status": "queued",
-    "task_id": "11111111-2222-4333-8444-555555555555"
-  },
-  "meta": {"request_id": "req_mock_add_existing", "generated_at": "2026-10-13T10:31:00Z"}
-}

@@ -1,0 +1,399 @@
+{
+  "repository_id": 101,
+  "run_id": "demo-insights-active",
+  "metric_version": "insights-v1",
+  "status": "ready",
+  "window_start": "2026-08-17T00:00:00Z",
+  "window_end": "2026-10-12T00:00:00Z",
+  "timezone": "UTC",
+  "analyzed_at": "2026-10-12T00:00:00Z",
+  "source_task_ids": [
+    "fixed-fixture-task"
+  ],
+  "source_archive_paths": [
+    "fixture:tests/fixtures/insights/events.json"
+  ],
+  "origin": "demo_fixture",
+  "sources": {
+    "commits": {
+      "coverage": "complete",
+      "collected_at": "2026-10-12T00:00:00Z",
+      "page_count": 1,
+      "has_next": false,
+      "observed_records": 89,
+      "endpoint": "fixture:commits"
+    },
+    "issues": {
+      "coverage": "complete",
+      "collected_at": "2026-10-12T00:00:00Z",
+      "page_count": 1,
+      "has_next": false,
+      "observed_records": 10,
+      "endpoint": "fixture:issues"
+    },
+    "pulls": {
+      "coverage": "complete",
+      "collected_at": "2026-10-12T00:00:00Z",
+      "page_count": 1,
+      "has_next": false,
+      "observed_records": 5,
+      "endpoint": "fixture:pulls"
+    },
+    "releases": {
+      "coverage": "complete",
+      "collected_at": "2026-10-12T00:00:00Z",
+      "page_count": 1,
+      "has_next": false,
+      "observed_records": 3,
+      "endpoint": "fixture:releases"
+    }
+  },
+  "insights": {
+    "commit_activity": {
+      "metric_key": "commits_weekly",
+      "unit": "commits",
+      "window_start": "2026-08-17T00:00:00Z",
+      "window_end": "2026-10-12T00:00:00Z",
+      "quality": {
+        "status": "ready",
+        "coverage": "complete",
+        "valid_samples": 89,
+        "reason": null,
+        "rejected_records": 0,
+        "invalid_event_times": 0
+      },
+      "weekly": [
+        {
+          "start": "2026-08-17T00:00:00Z",
+          "end": "2026-08-24T00:00:00Z",
+          "value": 5,
+          "observed_events": 5,
+          "quality": "ready",
+          "complete_week": true
+        },
+        {
+          "start": "2026-08-24T00:00:00Z",
+          "end": "2026-08-31T00:00:00Z",
+          "value": 5,
+          "observed_events": 5,
+          "quality": "ready",
+          "complete_week": true
+        },
+        {
+          "start": "2026-08-31T00:00:00Z",
+          "end": "2026-09-07T00:00:00Z",
+          "value": 10,
+          "observed_events": 10,
+          "quality": "ready",
+          "complete_week": true
+        },
+        {
+          "start": "2026-09-07T00:00:00Z",
+          "end": "2026-09-14T00:00:00Z",
+          "value": 10,
+          "observed_events": 10,
+          "quality": "ready",
+          "complete_week": true
+        },
+        {
+          "start": "2026-09-14T00:00:00Z",
+          "end": "2026-09-21T00:00:00Z",
+          "value": 10,
+          "observed_events": 10,
+          "quality": "ready",
+          "complete_week": true
+        },
+        {
+          "start": "2026-09-21T00:00:00Z",
+          "end": "2026-09-28T00:00:00Z",
+          "value": 15,
+          "observed_events": 15,
+          "quality": "ready",
+          "complete_week": true
+        },
+        {
+          "start": "2026-09-28T00:00:00Z",
+          "end": "2026-10-05T00:00:00Z",
+          "value": 14,
+          "observed_events": 14,
+          "quality": "ready",
+          "complete_week": true
+        },
+        {
+          "start": "2026-10-05T00:00:00Z",
+          "end": "2026-10-12T00:00:00Z",
+          "value": 20,
+          "observed_events": 20,
+          "quality": "ready",
+          "complete_week": true
+        }
+      ],
+      "recent_4w": 59,
+      "previous_4w": 30,
+      "delta": 29,
+      "change_rate_pct": 96.66666666666667,
+      "comparison_reason": null
+    },
+    "issue_resolution": {
+      "metric_key": "issue_closed_duration_hours",
+      "unit": "hours",
+      "window_start": "2026-08-17T00:00:00Z",
+      "window_end": "2026-10-12T00:00:00Z",
+      "quality": {
+        "status": "ready",
+        "coverage": "complete",
+        "valid_samples": 10,
+        "reason": null,
+        "rejected_records": 0,
+        "invalid_event_times": 0
+      },
+      "observed_terminal_count": 10,
+      "excluded_invalid_duration": 0,
+      "missing_duration_rate": 0.0,
+      "observed_without_terminal": 0,
+      "median_hours": 30.0,
+      "p75_hours": 72.5,
+      "p90_hours": 102.0,
+      "histogram": [
+        {
+          "label": "<1 天",
+          "count": 5
+        },
+        {
+          "label": "1–3 天",
+          "count": 2
+        },
+        {
+          "label": "3–7 天",
+          "count": 3
+        },
+        {
+          "label": "7–30 天",
+          "count": 0
+        },
+        {
+          "label": "≥30 天",
+          "count": 0
+        }
+      ],
+      "weekly": [
+        {
+          "start": "2026-08-17T00:00:00Z",
+          "end": "2026-08-24T00:00:00Z",
+          "value": 10,
+          "observed_events": 10,
+          "quality": "ready",
+          "complete_week": true
+        },
+        {
+          "start": "2026-08-24T00:00:00Z",
+          "end": "2026-08-31T00:00:00Z",
+          "value": 0,
+          "observed_events": 0,
+          "quality": "ready",
+          "complete_week": true
+        },
+        {
+          "start": "2026-08-31T00:00:00Z",
+          "end": "2026-09-07T00:00:00Z",
+          "value": 0,
+          "observed_events": 0,
+          "quality": "ready",
+          "complete_week": true
+        },
+        {
+          "start": "2026-09-07T00:00:00Z",
+          "end": "2026-09-14T00:00:00Z",
+          "value": 0,
+          "observed_events": 0,
+          "quality": "ready",
+          "complete_week": true
+        },
+        {
+          "start": "2026-09-14T00:00:00Z",
+          "end": "2026-09-21T00:00:00Z",
+          "value": 0,
+          "observed_events": 0,
+          "quality": "ready",
+          "complete_week": true
+        },
+        {
+          "start": "2026-09-21T00:00:00Z",
+          "end": "2026-09-28T00:00:00Z",
+          "value": 0,
+          "observed_events": 0,
+          "quality": "ready",
+          "complete_week": true
+        },
+        {
+          "start": "2026-09-28T00:00:00Z",
+          "end": "2026-10-05T00:00:00Z",
+          "value": 0,
+          "observed_events": 0,
+          "quality": "ready",
+          "complete_week": true
+        },
+        {
+          "start": "2026-10-05T00:00:00Z",
+          "end": "2026-10-12T00:00:00Z",
+          "value": 0,
+          "observed_events": 0,
+          "quality": "ready",
+          "complete_week": true
+        }
+      ]
+    },
+    "pr_merges": {
+      "metric_key": "pr_merge_duration_hours",
+      "unit": "hours",
+      "window_start": "2026-08-17T00:00:00Z",
+      "window_end": "2026-10-12T00:00:00Z",
+      "quality": {
+        "status": "ready",
+        "coverage": "complete",
+        "valid_samples": 5,
+        "reason": null,
+        "rejected_records": 0,
+        "invalid_event_times": 0
+      },
+      "observed_terminal_count": 5,
+      "excluded_invalid_duration": 0,
+      "missing_duration_rate": 0.0,
+      "observed_without_terminal": 0,
+      "median_hours": 6.0,
+      "p75_hours": 8.0,
+      "p90_hours": null,
+      "histogram": [
+        {
+          "label": "<1 天",
+          "count": 5
+        },
+        {
+          "label": "1–3 天",
+          "count": 0
+        },
+        {
+          "label": "3–7 天",
+          "count": 0
+        },
+        {
+          "label": "7–30 天",
+          "count": 0
+        },
+        {
+          "label": "≥30 天",
+          "count": 0
+        }
+      ],
+      "weekly": [
+        {
+          "start": "2026-08-17T00:00:00Z",
+          "end": "2026-08-24T00:00:00Z",
+          "value": 5,
+          "observed_events": 5,
+          "quality": "ready",
+          "complete_week": true
+        },
+        {
+          "start": "2026-08-24T00:00:00Z",
+          "end": "2026-08-31T00:00:00Z",
+          "value": 0,
+          "observed_events": 0,
+          "quality": "ready",
+          "complete_week": true
+        },
+        {
+          "start": "2026-08-31T00:00:00Z",
+          "end": "2026-09-07T00:00:00Z",
+          "value": 0,
+          "observed_events": 0,
+          "quality": "ready",
+          "complete_week": true
+        },
+        {
+          "start": "2026-09-07T00:00:00Z",
+          "end": "2026-09-14T00:00:00Z",
+          "value": 0,
+          "observed_events": 0,
+          "quality": "ready",
+          "complete_week": true
+        },
+        {
+          "start": "2026-09-14T00:00:00Z",
+          "end": "2026-09-21T00:00:00Z",
+          "value": 0,
+          "observed_events": 0,
+          "quality": "ready",
+          "complete_week": true
+        },
+        {
+          "start": "2026-09-21T00:00:00Z",
+          "end": "2026-09-28T00:00:00Z",
+          "value": 0,
+          "observed_events": 0,
+          "quality": "ready",
+          "complete_week": true
+        },
+        {
+          "start": "2026-09-28T00:00:00Z",
+          "end": "2026-10-05T00:00:00Z",
+          "value": 0,
+          "observed_events": 0,
+          "quality": "ready",
+          "complete_week": true
+        },
+        {
+          "start": "2026-10-05T00:00:00Z",
+          "end": "2026-10-12T00:00:00Z",
+          "value": 0,
+          "observed_events": 0,
+          "quality": "ready",
+          "complete_week": true
+        }
+      ]
+    },
+    "release_cadence": {
+      "metric_key": "release_intervals_days",
+      "unit": "days",
+      "window_start": "2025-10-12T00:00:00Z",
+      "window_end": "2026-10-12T00:00:00Z",
+      "quality": {
+        "status": "ready",
+        "coverage": "complete",
+        "valid_samples": 3,
+        "reason": null,
+        "rejected_records": 0,
+        "invalid_event_times": 0
+      },
+      "release_count": 3,
+      "prerelease_count": 0,
+      "timeline": [
+        {
+          "id": "200",
+          "published_at": "2026-08-18T00:00:00Z"
+        },
+        {
+          "id": "201",
+          "published_at": "2026-08-28T00:00:00Z"
+        },
+        {
+          "id": "202",
+          "published_at": "2026-09-17T00:00:00Z"
+        }
+      ],
+      "intervals_days": [
+        10.0,
+        20.0
+      ],
+      "median_interval_days": 15.0
+    }
+  },
+  "limitations": [
+    "固定事件计算的演示数据，不代表示例仓库真实活动。",
+    "UTC，左闭右开窗口；分页完成只代表指定端点与查询范围，不代表 GitHub 全历史。",
+    "Commit 来自默认分支，包含合并提交；Issue 使用对象最近可观测关闭时间，不回溯 reopen 生命周期。",
+    "PR 仅采集 closed 状态；合并耗时不是首次响应时间，不能计算所有创建 PR 的合并率。",
+    "Release 仅统计已发布正式版本；预发布单独计数，纯 tag 不计入。",
+    "GitHub 对象在分页期间可能更新；统计是采集时观察结果，不是事务一致的全站快照。"
+  ]
+}

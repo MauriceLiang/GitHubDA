@@ -39,3 +39,15 @@ def get_data_quality(request: Request, dataset_id: str, session: Session = Depen
 @router.post("/comparisons", response_model=SuccessEnvelope[ComparisonResponse])
 def compare(request: Request, body: ComparisonRequest, session: Session = Depends(get_session)):
     return envelope(request, compare_repositories(session, body.repository_ids, body.depth))
+
+
+@router.post("/comparisons/insights")
+def compare_activity_insights(request: Request, body: ComparisonRequest, session: Session = Depends(get_session)):
+    from backend.app.services.insight_comparison import compare_insights
+    return envelope(request, compare_insights(session, body.repository_ids))
+
+
+@router.get("/research/insights")
+def get_research_insights(request: Request, dataset_id: str, session: Session = Depends(get_session)):
+    from backend.app.services.insight_comparison import research_insights
+    return envelope(request, research_insights(session, dataset_id))

@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from backend.app.core.clock import iso_z, utc_now
 from backend.app.core.exceptions import AppError
 from backend.app.integrations.github.client import PageObservation, PaginatedResult
-from backend.app.persistence.models import ActivityWindow, AnalysisResult, CollectionLog, CollectionTask, RepositorySnapshot, TaskModuleProgress
+from backend.app.persistence.models import ActivityWindow, AnalysisResult, CollectionLog, CollectionTask, RepositoryInsightRun, RepositorySnapshot, TaskModuleProgress
 from backend.app.pipeline.raw_archive import archive_json
 from backend.app.services.repositories import latest_analysis
 from backend.app.worker.executor import execute_task
@@ -30,10 +30,10 @@ class WorkerGitHub:
         self.max_pages = 10
         event_time = iso_z(utc_now() - timedelta(days=1))
         self.records = {
-            "commits": [{"sha": "commit-1"}],
-            "issues": [{"created_at": event_time, "closed_at": event_time}],
-            "pulls": [{"created_at": event_time, "merged_at": event_time}],
-            "releases": [{"published_at": event_time}],
+            "commits": [{"sha": "a" * 40, "commit": {"committer": {"date": event_time}}}],
+            "issues": [{"id": 1, "created_at": event_time, "closed_at": event_time}],
+            "pulls": [{"id": 2, "created_at": event_time, "merged_at": event_time}],
+            "releases": [{"id": 3, "published_at": event_time}],
         }
 
     def get_repository_by_id(self, _repository_id, etag=None):
@@ -254,6 +254,68 @@ def test_deep_partial_coverage_keeps_basic_profile_complete(backend_client, monk
     assert json.loads(deep.metrics_json)["commits_90d"] is None
     assert deep.coverage == "partial"
     assert archived["commits"]["error"] == "GITHUB_TIMEOUT"
+
+
+def test_reaching_user_page_limit_completes_collection_and_analysis(backend_client, monkeypatch):
+    client, factory, default_github = backend_client
+    _create_repository(client)
+    task_id = _queue_task(factory, "deep")
+    archived = {}
+
+    class PageLimitedGitHub(WorkerGitHub):
+        def __init__(self, repository):
+            super().__init__(repository)
+            self.max_pages = 2
+
+        def list_commits_detailed(self, _full_name, _since, _until, *, on_page=None):
+            rows = self.records["commits"]
+            pages = ["[]", "[]"]
+            if on_page:
+                for page in range(1, self.max_pages + 1):
+                    on_page(PageObservation(
+                        page_index=page,
+                        pages_fetched=page,
+                        observed_items=len(rows),
+                        page_cap=self.max_pages,
+                        has_next=True,
+                        duration_ms=0.1,
+                    ))
+            return PaginatedResult(
+                items=rows,
+                raw_pages=pages,
+                complete=False,
+                pages_fetched=self.max_pages,
+                observed_items=len(rows),
+                has_next=True,
+                http_calls=self.max_pages,
+                duration_ms=0.2,
+            )
+
+    def capture_archive(_repository_id, _task_id, kind, value):
+        if kind == "deep_responses":
+            archived.update(value)
+        return f"test/{kind}.json.gz"
+
+    monkeypatch.setattr("backend.app.worker.executor.archive_json", capture_archive)
+    execute_task(factory, task_id, PageLimitedGitHub(default_github.repository))
+
+    with factory() as session:
+        task = session.get(CollectionTask, task_id)
+        deep = latest_analysis(session, 123, "deep")
+        commit_progress = session.get(TaskModuleProgress, (task_id, "commits"))
+        insight = session.scalar(select(RepositoryInsightRun).where(RepositoryInsightRun.repository_id == 123))
+
+    assert task.status == "succeeded"
+    assert task.message == "已按用户设置的页数上限完成采集与分析"
+    assert deep.coverage == "complete"
+    assert commit_progress.status == "complete"
+    assert commit_progress.coverage == "complete"
+    assert commit_progress.pages_fetched == commit_progress.page_cap == 2
+    assert commit_progress.error_code is None
+    assert insight.status == "ready"
+    assert archived["_meta"]["sources"]["commits"]["limit_reached"] is True
+    assert archived["_meta"]["sources"]["commits"]["has_next"] is True
+    assert "error" not in archived["commits"]
 
 
 def test_deep_activity_archive_failure_keeps_collected_snapshot(backend_client, monkeypatch):

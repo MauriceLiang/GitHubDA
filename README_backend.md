@@ -24,7 +24,7 @@ cp .env.example .env
 uv run --locked --all-extras python -m scripts.start
 ```
 
-它会自动升级数据库，并依次启动 API、Worker 和 Streamlit 前端。首次运行会创建 `.env` 并生成本机随机 `INTERNAL_API_KEY`；访问地址和局域网设置见 [README.md](README.md)。
+它会先构建 Vue 前端，再自动升级数据库并启动 API 与 Worker。首次运行会创建 `.env` 并生成本机随机 `INTERNAL_API_KEY`；完整访问地址见 [README.md](README.md)。新前端仅允许绑定本机回环地址。
 
 需要单独调试后端时，可手动运行迁移并分别启动 API 与 Worker：
 
@@ -37,11 +37,11 @@ alembic upgrade head
 分别启动 API 与 Worker：
 
 ```bash
-python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8501
 python -m backend.app.worker.main
 ```
 
-健康检查为 `GET /healthz`。其余 `/api/v1/*` 请求须带 `X-Internal-Api-Key`。`/docs` 和 `/openapi.json` 用于本机联调，服务默认只绑定回环地址。
+健康检查为 `GET /healthz`。其余 `/api/v1/*` 请求须带 `X-Internal-Api-Key`。`/api/browser/*` 是给同源 Vue 前端使用的本机会话入口；密钥不会下发到浏览器。`/docs` 和 `/openapi.json` 用于本机联调，服务默认只绑定回环地址。
 
 ## 研究样本
 
@@ -87,7 +87,7 @@ Worker 对基础仓库档案采集真实快照。深度采集限定在近期窗�
 ## 验证与诊断
 
 ```bash
-python -m compileall -q backend frontend migrations scripts tests
+python -m compileall -q backend migrations scripts tests
 python -m pytest -p no:cacheprovider tests/backend -q
 python -m scripts.check_data_integrity
 ```
@@ -95,3 +95,16 @@ python -m scripts.check_data_integrity
 做本地集成验收前，将 `DATABASE_URL`、`RAW_DATA_DIR` 和随机 `INTERNAL_API_KEY` 配置到本地环境；API 与 Worker 必须使用相同配置。临时数据库先运行 `alembic upgrade head`，再分别启动 API 和 Worker。确认 `/healthz` 返回 200 后，带 `X-Internal-Api-Key` 请求 `/api/v1/datasets` 与 `/api/v1/system/status`。真实 GitHub 冒烟可通过 `/api/v1/github/resolve` 查询一个公开仓库，再添加到分析库并轮询任务；记录 `X-Request-ID`、任务终态和 coverage，勿将 Token、内部 Key、测试数据库或原始归档提交到仓库。
 
 `GET /api/v1/system/status` 读取数据库、Worker 心跳、队列和 GitHub 最近一次限额缓存；它不会为了状态查询消耗 GitHub 配额。`GET /repositories/{id}` 只读取本地数据库，因此 GitHub 暂时不可用时仍能展示最近一次成功结果。
+
+## 事件分析 API（insights-v1）
+
+新增接口均沿用内部认证和 `{data,meta}` 响应；浏览器沿用同源会话/CSRF，不传内部 Key：
+
+- `GET /api/v1/repositories/{id}/insights`：最新版本化运行、按指标独立质量、来源、限制。
+- `GET /api/v1/repositories/{id}/insights/series?metric=commits_weekly|issues_closed_weekly|prs_merged_weekly`。
+- `GET /api/v1/repositories/{id}/insights/quality`：模块分页、错误、观察与查询范围。
+- `GET /api/v1/repositories/{id}/insights/export.csv`：精确统计与分桶，包含单位、版本、窗口、任务，防 CSV 公式注入。
+- `POST /api/v1/comparisons/insights`：`{"repository_ids":[1,2],"depth":"deep"}`；提交仅使用共同完整周，耗时窗口不一致则不给可比值。
+- `GET /api/v1/research/insights?dataset_id=...`：研究成员活动分组、分布与相关，排除非 ready 输入。
+
+无事件返回 missing，不返回伪造零值；单模块 partial 不影响其他 ready 模块。旧 `/analysis`、`/series`、比较和导出合同不变。完整合同见运行中的 `/docs`，离线快照见 [OpenAPI](docs/insights/openapi-insights.json)。指标字典与来源限制见 [指标文档](docs/insights/01_metric_dictionary.md)。

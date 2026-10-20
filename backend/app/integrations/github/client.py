@@ -48,7 +48,7 @@ class PaginatedResult:
 
 
 class GitHubClient:
-    def __init__(self, client: httpx.Client | None = None, request_id: str | None = None):
+    def __init__(self, client: httpx.Client | None = None, request_id: str | None = None, max_pages: int | None = None):
         settings = get_settings()
         headers = {
             "Accept": "application/vnd.github+json",
@@ -68,7 +68,7 @@ class GitHubClient:
         if client is not None:
             self.client.headers.update(headers)
         self._owns_client = client is None
-        self.max_pages = settings.github_max_pages
+        self.max_pages = settings.github_max_pages if max_pages is None else max_pages
         self._metrics_lock = threading.Lock()
         self._request_metrics: dict[str, int | float] = {
             "http_calls": 0,

@@ -236,8 +236,24 @@ def compare_repositories(session: Session, repository_ids: list[int], depth: str
         repositories.append({
             "repository_id": repository_id,
             "full_name": repo.full_name,
-            "metrics": {"stars": snapshot.stars, "forks": snapshot.forks, "days_since_push": metrics.get("days_since_push"), "commits_90d": metrics.get("commits_90d")},
+            "metrics": {
+                "stars": snapshot.stars,
+                "forks": snapshot.forks,
+                "age_days": metrics.get("age_days"),
+                "days_since_push": metrics.get("days_since_push"),
+                "commits_90d": metrics.get("commits_90d"),
+                "issues_closed_90d": metrics.get("issues_closed_90d"),
+                "pr_merged_90d": metrics.get("pr_merged_90d"),
+                "release_count_365d": metrics.get("release_count_365d"),
+            },
             "coverage": analysis.coverage if requested_analysis else ("partial" if depth == "deep" else base.coverage),
+            "source": {
+                "profile_collected_at": iso_z(snapshot.collected_at),
+                "analysis_collected_at": iso_z(analysis.source_collected_at),
+                "analysis_depth": analysis.analysis_kind,
+                "window_start": iso_z(analysis.window_start),
+                "window_end": iso_z(analysis.window_end),
+            },
         })
         collected_at.append(snapshot.collected_at)
         languages.add(repo.language)
