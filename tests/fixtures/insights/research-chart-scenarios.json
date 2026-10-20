@@ -1,0 +1,12 @@
+{
+  "base": "events.json",
+  "duration_multipliers": [
+    0.25,
+    1,
+    2,
+    4,
+    12
+  ],
+  "observed_members": 5,
+  "total_members": 24
+}

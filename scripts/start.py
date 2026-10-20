@@ -23,7 +23,7 @@ from dotenv import dotenv_values, set_key
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_FILE = PROJECT_ROOT / ".env"
 ENV_EXAMPLE = PROJECT_ROOT / ".env.example"
-WEB_DIR = PROJECT_ROOT / "web"
+FRONTEND_DIR = PROJECT_ROOT / "githubda-ui-prototype"
 SAMPLE_API_KEY = "replace-with-a-long-random-local-secret"
 SERVICE_START_TIMEOUT_SECONDS = 30
 WORKER_START_TIMEOUT_SECONDS = 30
@@ -60,12 +60,12 @@ def run_migrations() -> None:
 def build_frontend() -> None:
     npm = shutil.which("npm")
     if not npm:
-        raise RuntimeError("未找到 npm。请安装 Node.js，然后在 web 目录运行 npm ci。")
-    if not (WEB_DIR / "node_modules" / ".bin" / "vite").exists():
+        raise RuntimeError("未找到 npm。请安装 Node.js，然后在 githubda-ui-prototype 目录运行 npm ci。")
+    if not (FRONTEND_DIR / "node_modules" / ".bin" / "vite").exists():
         print("正在安装 Vue 前端依赖…", flush=True)
-        subprocess.run([npm, "ci", "--no-audit", "--no-fund"], cwd=WEB_DIR, check=True)
+        subprocess.run([npm, "ci", "--no-audit", "--no-fund"], cwd=FRONTEND_DIR, check=True)
     print("正在构建 Vue 前端…", flush=True)
-    subprocess.run([npm, "run", "build"], cwd=WEB_DIR, check=True)
+    subprocess.run([npm, "run", "build"], cwd=FRONTEND_DIR, check=True)
 
 
 def start_process(name: str, command: list[str], env: dict[str, str]) -> subprocess.Popen[bytes]:

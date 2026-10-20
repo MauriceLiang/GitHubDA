@@ -212,3 +212,48 @@ class RequestIdempotency(Base):
     expires_at: Mapped[object] = mapped_column(DateTime, nullable=False)
     response_json: Mapped[str] = mapped_column(Text, nullable=False)
     status_code: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class RepositoryActivityEvent(Base):
+    __tablename__ = "repository_activity_events"
+    __table_args__ = (
+        UniqueConstraint("repository_id", "event_type", "source_item_id", name="uq_activity_event"),
+        Index("ix_event_repo_type_time", "repository_id", "event_type", "event_at"),
+        Index("ix_event_repo_created", "repository_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    repository_id: Mapped[int] = mapped_column(ForeignKey("repositories.repository_id"), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    source_item_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_at: Mapped[object | None] = mapped_column(DateTime)
+    created_at: Mapped[object | None] = mapped_column(DateTime)
+    closed_at: Mapped[object | None] = mapped_column(DateTime)
+    merged_at: Mapped[object | None] = mapped_column(DateTime)
+    published_at: Mapped[object | None] = mapped_column(DateTime)
+    updated_at: Mapped[object | None] = mapped_column(DateTime)
+    author_key: Mapped[str | None] = mapped_column(String(64))
+    is_draft: Mapped[bool | None] = mapped_column(Boolean)
+    is_prerelease: Mapped[bool | None] = mapped_column(Boolean)
+    first_seen_at: Mapped[object] = mapped_column(DateTime, nullable=False)
+    last_seen_at: Mapped[object] = mapped_column(DateTime, nullable=False)
+    source_task_id: Mapped[str] = mapped_column(String(100), nullable=False)
+
+
+class RepositoryInsightRun(Base):
+    __tablename__ = "repository_insight_runs"
+    __table_args__ = (Index("ix_insight_repo_analyzed", "repository_id", "analyzed_at"),)
+
+    run_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    input_fingerprint: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    repository_id: Mapped[int] = mapped_column(ForeignKey("repositories.repository_id"), nullable=False)
+    metric_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    window_start: Mapped[object] = mapped_column(DateTime, nullable=False)
+    window_end: Mapped[object] = mapped_column(DateTime, nullable=False)
+    analyzed_at: Mapped[object] = mapped_column(DateTime, nullable=False)
+    source_task_ids_json: Mapped[str] = mapped_column(Text, nullable=False)
+    source_archive_paths_json: Mapped[str] = mapped_column(Text, nullable=False)
+    module_coverage_json: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    limitations_json: Mapped[str] = mapped_column(Text, nullable=False)
+    result_json: Mapped[str] = mapped_column(Text, nullable=False)

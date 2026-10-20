@@ -59,5 +59,27 @@ def test_0001_database_upgrades_to_task_progress_without_losing_tasks(tmp_path, 
         ).one()
         assert row == ("legacy-task", "succeeded", 75.0, "unknown", None, None)
         assert inspect(connection).has_table("task_module_progress")
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0002_task_progress"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0003_activity_insights"
     upgraded.dispose()
+
+
+def test_fresh_database_upgrades_and_insights_downgrade_preserves_old_data(tmp_path, monkeypatch):
+    url = f"sqlite:///{tmp_path / 'fresh.db'}"
+    monkeypatch.setenv('DATABASE_URL', url)
+    get_settings.cache_clear()
+    config = Config(str(Path(__file__).resolve().parents[2] / 'alembic.ini'))
+    try:
+        command.upgrade(config, 'head')
+        engine = create_engine(url)
+        with engine.begin() as connection:
+            connection.exec_driver_sql("INSERT INTO repositories (repository_id,full_name,html_url,archived,is_fork,first_seen_at,last_seen_at) VALUES (1,'fixture/legacy','https://github.com/fixture/legacy',0,0,'2026-01-01','2026-01-01')")
+        engine.dispose()
+        command.downgrade(config, '0002_task_progress')
+        command.upgrade(config, 'head')
+        engine = create_engine(url)
+        with engine.connect() as connection:
+            assert connection.exec_driver_sql('SELECT full_name FROM repositories WHERE repository_id=1').scalar_one() == 'fixture/legacy'
+            assert inspect(connection).has_table('repository_activity_events')
+        engine.dispose()
+    finally:
+        get_settings.cache_clear()

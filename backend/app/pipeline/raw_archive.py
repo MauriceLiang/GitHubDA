@@ -2,6 +2,7 @@ import gzip
 import json
 import os
 import tempfile
+import zlib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -30,3 +31,25 @@ def archive_json(repository_id: int, task_id: str, kind: str, value: Any) -> str
             pass
         raise
     return str(relative)
+
+
+def read_archive(relative: str, *, max_compressed_bytes=16_000_000, max_bytes=64_000_000) -> dict:
+    """Bounded, data-only replay. No pickle, paths or executable archive members."""
+    root = get_settings().raw_data_path.resolve()
+    candidate = Path(relative)
+    target = (root / candidate).resolve()
+    if candidate.is_absolute() or not target.is_relative_to(root) or target.suffixes[-2:] != [".json", ".gz"]:
+        raise ValueError("archive path escapes configured raw data directory or has invalid format")
+    if target.stat().st_size > max_compressed_bytes:
+        raise ValueError("compressed archive exceeds size limit")
+    try:
+        with gzip.open(target, "rb") as handle:
+            payload = handle.read(max_bytes + 1)
+        if len(payload) > max_bytes:
+            raise ValueError("decompressed archive exceeds size limit")
+        value = json.loads(payload)
+    except (OSError, EOFError, zlib.error, UnicodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise ValueError("invalid gzip JSON archive") from exc
+    if not isinstance(value, dict):
+        raise ValueError("archive root must be an object")
+    return value

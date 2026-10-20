@@ -10,7 +10,7 @@ docs/*
 docs/ux/*
 !docs/ux/v22-progress.md
 .idea
-web/node_modules/
-web/dist/
-web/playwright-report/
-web/test-results/
+githubda-ui-prototype/node_modules/
+githubda-ui-prototype/dist/
+!docs/insights/
+docs

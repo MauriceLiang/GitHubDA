@@ -1,0 +1,539 @@
+{
+  "dataset_id": "oss-2025",
+  "metric_version": "insights-v1",
+  "frozen_at": "2026-01-01T00:00:00Z",
+  "sample_size": 24,
+  "summary": {
+    "commits_weekly_mean": {
+      "count": 5,
+      "mean": 11.125,
+      "median": 11.125,
+      "std": 0.0,
+      "missing_count": 19,
+      "missing_rate": 0.7916666666666666,
+      "unit": "commits/week"
+    },
+    "issue_median_hours": {
+      "count": 5,
+      "mean": 91.5,
+      "median": 60.0,
+      "std": 93.133,
+      "missing_count": 19,
+      "missing_rate": 0.7916666666666666,
+      "unit": "hours"
+    },
+    "pr_median_hours": {
+      "count": 5,
+      "mean": 23.1,
+      "median": 12.0,
+      "std": 28.61,
+      "missing_count": 19,
+      "missing_rate": 0.7916666666666666,
+      "unit": "hours"
+    },
+    "release_interval_days": {
+      "count": 5,
+      "mean": 15.0,
+      "median": 15.0,
+      "std": 0.0,
+      "missing_count": 19,
+      "missing_rate": 0.7916666666666666,
+      "unit": "days"
+    }
+  },
+  "groups": [
+    {
+      "language": "Go",
+      "n": 1,
+      "metrics": {
+        "commits_weekly_mean": {
+          "count": 1,
+          "mean": 11.125,
+          "median": 11.125,
+          "std": null
+        },
+        "issue_median_hours": {
+          "count": 1,
+          "mean": 240.0,
+          "median": 240.0,
+          "std": null
+        },
+        "pr_median_hours": {
+          "count": 1,
+          "mean": 72.0,
+          "median": 72.0,
+          "std": null
+        },
+        "release_interval_days": {
+          "count": 1,
+          "mean": 15.0,
+          "median": 15.0,
+          "std": null
+        }
+      }
+    },
+    {
+      "language": "Python",
+      "n": 2,
+      "metrics": {
+        "commits_weekly_mean": {
+          "count": 2,
+          "mean": 11.125,
+          "median": 11.125,
+          "std": 0.0
+        },
+        "issue_median_hours": {
+          "count": 2,
+          "mean": 18.75,
+          "median": 18.75,
+          "std": 15.91
+        },
+        "pr_median_hours": {
+          "count": 2,
+          "mean": 3.75,
+          "median": 3.75,
+          "std": 3.182
+        },
+        "release_interval_days": {
+          "count": 2,
+          "mean": 15.0,
+          "median": 15.0,
+          "std": 0.0
+        }
+      }
+    },
+    {
+      "language": "TypeScript",
+      "n": 2,
+      "metrics": {
+        "commits_weekly_mean": {
+          "count": 2,
+          "mean": 11.125,
+          "median": 11.125,
+          "std": 0.0
+        },
+        "issue_median_hours": {
+          "count": 2,
+          "mean": 90.0,
+          "median": 90.0,
+          "std": 42.426
+        },
+        "pr_median_hours": {
+          "count": 2,
+          "mean": 18.0,
+          "median": 18.0,
+          "std": 8.485
+        },
+        "release_interval_days": {
+          "count": 2,
+          "mean": 15.0,
+          "median": 15.0,
+          "std": 0.0
+        }
+      }
+    },
+    {
+      "language": "未知",
+      "n": 19,
+      "metrics": {
+        "commits_weekly_mean": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "issue_median_hours": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "pr_median_hours": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        },
+        "release_interval_days": {
+          "count": 0,
+          "mean": null,
+          "median": null,
+          "std": null
+        }
+      }
+    }
+  ],
+  "rows": [
+    {
+      "repository_id": 501,
+      "full_name": "demo/sample-1",
+      "language": "Python",
+      "analyzed_at": "2026-10-12T00:00:00Z",
+      "window_start": "2026-08-17T00:00:00Z",
+      "window_end": "2026-10-12T00:00:00Z",
+      "run_id": "fixed-duration-scenario-0.25",
+      "values": {
+        "commits_weekly_mean": 11.125,
+        "issue_median_hours": 7.5,
+        "pr_median_hours": 1.5,
+        "release_interval_days": 15.0
+      }
+    },
+    {
+      "repository_id": 502,
+      "full_name": "demo/sample-2",
+      "language": "Python",
+      "analyzed_at": "2026-10-12T00:00:00Z",
+      "window_start": "2026-08-17T00:00:00Z",
+      "window_end": "2026-10-12T00:00:00Z",
+      "run_id": "fixed-duration-scenario-1",
+      "values": {
+        "commits_weekly_mean": 11.125,
+        "issue_median_hours": 30.0,
+        "pr_median_hours": 6.0,
+        "release_interval_days": 15.0
+      }
+    },
+    {
+      "repository_id": 503,
+      "full_name": "demo/sample-3",
+      "language": "TypeScript",
+      "analyzed_at": "2026-10-12T00:00:00Z",
+      "window_start": "2026-08-17T00:00:00Z",
+      "window_end": "2026-10-12T00:00:00Z",
+      "run_id": "fixed-duration-scenario-2",
+      "values": {
+        "commits_weekly_mean": 11.125,
+        "issue_median_hours": 60.0,
+        "pr_median_hours": 12.0,
+        "release_interval_days": 15.0
+      }
+    },
+    {
+      "repository_id": 504,
+      "full_name": "demo/sample-4",
+      "language": "TypeScript",
+      "analyzed_at": "2026-10-12T00:00:00Z",
+      "window_start": "2026-08-17T00:00:00Z",
+      "window_end": "2026-10-12T00:00:00Z",
+      "run_id": "fixed-duration-scenario-4",
+      "values": {
+        "commits_weekly_mean": 11.125,
+        "issue_median_hours": 120.0,
+        "pr_median_hours": 24.0,
+        "release_interval_days": 15.0
+      }
+    },
+    {
+      "repository_id": 505,
+      "full_name": "demo/sample-5",
+      "language": "Go",
+      "analyzed_at": "2026-10-12T00:00:00Z",
+      "window_start": "2026-08-17T00:00:00Z",
+      "window_end": "2026-10-12T00:00:00Z",
+      "run_id": "fixed-duration-scenario-12",
+      "values": {
+        "commits_weekly_mean": 11.125,
+        "issue_median_hours": 240.0,
+        "pr_median_hours": 72.0,
+        "release_interval_days": 15.0
+      }
+    },
+    {
+      "repository_id": 506,
+      "full_name": "demo/member-6",
+      "language": "未知",
+      "analyzed_at": null,
+      "window_start": null,
+      "window_end": null,
+      "run_id": null,
+      "values": {
+        "commits_weekly_mean": null,
+        "issue_median_hours": null,
+        "pr_median_hours": null,
+        "release_interval_days": null
+      }
+    },
+    {
+      "repository_id": 507,
+      "full_name": "demo/member-7",
+      "language": "未知",
+      "analyzed_at": null,
+      "window_start": null,
+      "window_end": null,
+      "run_id": null,
+      "values": {
+        "commits_weekly_mean": null,
+        "issue_median_hours": null,
+        "pr_median_hours": null,
+        "release_interval_days": null
+      }
+    },
+    {
+      "repository_id": 508,
+      "full_name": "demo/member-8",
+      "language": "未知",
+      "analyzed_at": null,
+      "window_start": null,
+      "window_end": null,
+      "run_id": null,
+      "values": {
+        "commits_weekly_mean": null,
+        "issue_median_hours": null,
+        "pr_median_hours": null,
+        "release_interval_days": null
+      }
+    },
+    {
+      "repository_id": 509,
+      "full_name": "demo/member-9",
+      "language": "未知",
+      "analyzed_at": null,
+      "window_start": null,
+      "window_end": null,
+      "run_id": null,
+      "values": {
+        "commits_weekly_mean": null,
+        "issue_median_hours": null,
+        "pr_median_hours": null,
+        "release_interval_days": null
+      }
+    },
+    {
+      "repository_id": 510,
+      "full_name": "demo/member-10",
+      "language": "未知",
+      "analyzed_at": null,
+      "window_start": null,
+      "window_end": null,
+      "run_id": null,
+      "values": {
+        "commits_weekly_mean": null,
+        "issue_median_hours": null,
+        "pr_median_hours": null,
+        "release_interval_days": null
+      }
+    },
+    {
+      "repository_id": 511,
+      "full_name": "demo/member-11",
+      "language": "未知",
+      "analyzed_at": null,
+      "window_start": null,
+      "window_end": null,
+      "run_id": null,
+      "values": {
+        "commits_weekly_mean": null,
+        "issue_median_hours": null,
+        "pr_median_hours": null,
+        "release_interval_days": null
+      }
+    },
+    {
+      "repository_id": 512,
+      "full_name": "demo/member-12",
+      "language": "未知",
+      "analyzed_at": null,
+      "window_start": null,
+      "window_end": null,
+      "run_id": null,
+      "values": {
+        "commits_weekly_mean": null,
+        "issue_median_hours": null,
+        "pr_median_hours": null,
+        "release_interval_days": null
+      }
+    },
+    {
+      "repository_id": 513,
+      "full_name": "demo/member-13",
+      "language": "未知",
+      "analyzed_at": null,
+      "window_start": null,
+      "window_end": null,
+      "run_id": null,
+      "values": {
+        "commits_weekly_mean": null,
+        "issue_median_hours": null,
+        "pr_median_hours": null,
+        "release_interval_days": null
+      }
+    },
+    {
+      "repository_id": 514,
+      "full_name": "demo/member-14",
+      "language": "未知",
+      "analyzed_at": null,
+      "window_start": null,
+      "window_end": null,
+      "run_id": null,
+      "values": {
+        "commits_weekly_mean": null,
+        "issue_median_hours": null,
+        "pr_median_hours": null,
+        "release_interval_days": null
+      }
+    },
+    {
+      "repository_id": 515,
+      "full_name": "demo/member-15",
+      "language": "未知",
+      "analyzed_at": null,
+      "window_start": null,
+      "window_end": null,
+      "run_id": null,
+      "values": {
+        "commits_weekly_mean": null,
+        "issue_median_hours": null,
+        "pr_median_hours": null,
+        "release_interval_days": null
+      }
+    },
+    {
+      "repository_id": 516,
+      "full_name": "demo/member-16",
+      "language": "未知",
+      "analyzed_at": null,
+      "window_start": null,
+      "window_end": null,
+      "run_id": null,
+      "values": {
+        "commits_weekly_mean": null,
+        "issue_median_hours": null,
+        "pr_median_hours": null,
+        "release_interval_days": null
+      }
+    },
+    {
+      "repository_id": 517,
+      "full_name": "demo/member-17",
+      "language": "未知",
+      "analyzed_at": null,
+      "window_start": null,
+      "window_end": null,
+      "run_id": null,
+      "values": {
+        "commits_weekly_mean": null,
+        "issue_median_hours": null,
+        "pr_median_hours": null,
+        "release_interval_days": null
+      }
+    },
+    {
+      "repository_id": 518,
+      "full_name": "demo/member-18",
+      "language": "未知",
+      "analyzed_at": null,
+      "window_start": null,
+      "window_end": null,
+      "run_id": null,
+      "values": {
+        "commits_weekly_mean": null,
+        "issue_median_hours": null,
+        "pr_median_hours": null,
+        "release_interval_days": null
+      }
+    },
+    {
+      "repository_id": 519,
+      "full_name": "demo/member-19",
+      "language": "未知",
+      "analyzed_at": null,
+      "window_start": null,
+      "window_end": null,
+      "run_id": null,
+      "values": {
+        "commits_weekly_mean": null,
+        "issue_median_hours": null,
+        "pr_median_hours": null,
+        "release_interval_days": null
+      }
+    },
+    {
+      "repository_id": 520,
+      "full_name": "demo/member-20",
+      "language": "未知",
+      "analyzed_at": null,
+      "window_start": null,
+      "window_end": null,
+      "run_id": null,
+      "values": {
+        "commits_weekly_mean": null,
+        "issue_median_hours": null,
+        "pr_median_hours": null,
+        "release_interval_days": null
+      }
+    },
+    {
+      "repository_id": 521,
+      "full_name": "demo/member-21",
+      "language": "未知",
+      "analyzed_at": null,
+      "window_start": null,
+      "window_end": null,
+      "run_id": null,
+      "values": {
+        "commits_weekly_mean": null,
+        "issue_median_hours": null,
+        "pr_median_hours": null,
+        "release_interval_days": null
+      }
+    },
+    {
+      "repository_id": 522,
+      "full_name": "demo/member-22",
+      "language": "未知",
+      "analyzed_at": null,
+      "window_start": null,
+      "window_end": null,
+      "run_id": null,
+      "values": {
+        "commits_weekly_mean": null,
+        "issue_median_hours": null,
+        "pr_median_hours": null,
+        "release_interval_days": null
+      }
+    },
+    {
+      "repository_id": 523,
+      "full_name": "demo/member-23",
+      "language": "未知",
+      "analyzed_at": null,
+      "window_start": null,
+      "window_end": null,
+      "run_id": null,
+      "values": {
+        "commits_weekly_mean": null,
+        "issue_median_hours": null,
+        "pr_median_hours": null,
+        "release_interval_days": null
+      }
+    },
+    {
+      "repository_id": 524,
+      "full_name": "demo/member-24",
+      "language": "未知",
+      "analyzed_at": null,
+      "window_start": null,
+      "window_end": null,
+      "run_id": null,
+      "values": {
+        "commits_weekly_mean": null,
+        "issue_median_hours": null,
+        "pr_median_hours": null,
+        "release_interval_days": null
+      }
+    }
+  ],
+  "correlation": {
+    "method": "spearman",
+    "n": 5,
+    "coefficient": null,
+    "p_value": null,
+    "note": "有效配对样本少于 10，未计算研究性相关"
+  },
+  "limitations": [
+    "固定事件演示：5个有效活动样本、19个未采集成员；不代表这些仓库的真实GitHub活动或随机研究样本。",
+    "演示样本仅用于展示交互；图形与统计结果不推断因果或项目质量。"
+  ]
+}

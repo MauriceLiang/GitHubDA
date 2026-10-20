@@ -95,3 +95,16 @@ python -m scripts.check_data_integrity
 做本地集成验收前，将 `DATABASE_URL`、`RAW_DATA_DIR` 和随机 `INTERNAL_API_KEY` 配置到本地环境；API 与 Worker 必须使用相同配置。临时数据库先运行 `alembic upgrade head`，再分别启动 API 和 Worker。确认 `/healthz` 返回 200 后，带 `X-Internal-Api-Key` 请求 `/api/v1/datasets` 与 `/api/v1/system/status`。真实 GitHub 冒烟可通过 `/api/v1/github/resolve` 查询一个公开仓库，再添加到分析库并轮询任务；记录 `X-Request-ID`、任务终态和 coverage，勿将 Token、内部 Key、测试数据库或原始归档提交到仓库。
 
 `GET /api/v1/system/status` 读取数据库、Worker 心跳、队列和 GitHub 最近一次限额缓存；它不会为了状态查询消耗 GitHub 配额。`GET /repositories/{id}` 只读取本地数据库，因此 GitHub 暂时不可用时仍能展示最近一次成功结果。
+
+## 事件分析 API（insights-v1）
+
+新增接口均沿用内部认证和 `{data,meta}` 响应；浏览器沿用同源会话/CSRF，不传内部 Key：
+
+- `GET /api/v1/repositories/{id}/insights`：最新版本化运行、按指标独立质量、来源、限制。
+- `GET /api/v1/repositories/{id}/insights/series?metric=commits_weekly|issues_closed_weekly|prs_merged_weekly`。
+- `GET /api/v1/repositories/{id}/insights/quality`：模块分页、错误、观察与查询范围。
+- `GET /api/v1/repositories/{id}/insights/export.csv`：精确统计与分桶，包含单位、版本、窗口、任务，防 CSV 公式注入。
+- `POST /api/v1/comparisons/insights`：`{"repository_ids":[1,2],"depth":"deep"}`；提交仅使用共同完整周，耗时窗口不一致则不给可比值。
+- `GET /api/v1/research/insights?dataset_id=...`：研究成员活动分组、分布与相关，排除非 ready 输入。
+
+无事件返回 missing，不返回伪造零值；单模块 partial 不影响其他 ready 模块。旧 `/analysis`、`/series`、比较和导出合同不变。完整合同见运行中的 `/docs`，离线快照见 [OpenAPI](docs/insights/openapi-insights.json)。指标字典与来源限制见 [指标文档](docs/insights/01_metric_dictionary.md)。

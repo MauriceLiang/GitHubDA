@@ -30,10 +30,10 @@ class WorkerGitHub:
         self.max_pages = 10
         event_time = iso_z(utc_now() - timedelta(days=1))
         self.records = {
-            "commits": [{"sha": "commit-1"}],
-            "issues": [{"created_at": event_time, "closed_at": event_time}],
-            "pulls": [{"created_at": event_time, "merged_at": event_time}],
-            "releases": [{"published_at": event_time}],
+            "commits": [{"sha": "a" * 40, "commit": {"committer": {"date": event_time}}}],
+            "issues": [{"id": 1, "created_at": event_time, "closed_at": event_time}],
+            "pulls": [{"id": 2, "created_at": event_time, "merged_at": event_time}],
+            "releases": [{"id": 3, "published_at": event_time}],
         }
 
     def get_repository_by_id(self, _repository_id, etag=None):

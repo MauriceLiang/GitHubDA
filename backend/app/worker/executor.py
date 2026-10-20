@@ -15,6 +15,7 @@ from backend.app.pipeline.cleaner import clean_repository_profile
 from backend.app.pipeline.feature_builder import build_profile_metrics
 from backend.app.pipeline.quality import overall_coverage
 from backend.app.pipeline.raw_archive import archive_json
+from backend.app.services.insights import persist_insights
 from backend.app.services.repositories import latest_analysis, latest_snapshot, repository_from_github
 from backend.app.worker.queue import update_phase
 from backend.app.worker.progress import TaskProgressReporter
@@ -233,8 +234,9 @@ def execute_task(session_factory, task_id: str, github: GitHubClient) -> None:
         metrics = dict(profile_metrics)
         depth_coverage = "complete"
         activity: dict[str, Any] | None = None
-        window_start = collected_at - timedelta(days=90)
-        window_end = collected_at
+        insight_result = None
+        window_end = collected_at.replace(microsecond=0)
+        window_start = window_end - timedelta(days=90)
         if task.depth == "deep":
             if reporter:
                 reporter.set_phase("collecting", "正在采集有限时间窗的深度活动数据", 12)
@@ -277,6 +279,7 @@ def execute_task(session_factory, task_id: str, github: GitHubClient) -> None:
             except OSError:
                 activity_archive = None
                 session.add(CollectionLog(request_id=task.task_id, task_id=task.task_id, repository_id=repo.repository_id, event_type="archive_failed", source_endpoint="activity", http_status=status, message_redacted="深度活动数据归档写入失败"))
+            insight_result = persist_insights(session, repo.repository_id, task.task_id, activity["events"], activity["sources"], window_start, window_end, [activity_archive] if activity_archive else [])
             session.add(ActivityWindow(
                 repository_id=repo.repository_id,
                 depth="deep",
@@ -319,7 +322,8 @@ def execute_task(session_factory, task_id: str, github: GitHubClient) -> None:
                 valid_sample_size=1,
             ))
         session.add(result)
-        task.status = "partial" if coverage == "partial" else "succeeded"
+        incomplete = coverage == "partial" or (insight_result is not None and insight_result["status"] == "partial")
+        task.status = "partial" if incomplete else "succeeded"
         task.phase = None
         task.current_module = None
         if reporter:
@@ -329,7 +333,7 @@ def execute_task(session_factory, task_id: str, github: GitHubClient) -> None:
         else:
             task.progress_kind = "unknown"
             task.progress_percent = None
-        task.message = "基础数据与分析已完成" if coverage == "complete" else "基础数据已保存，部分深度模块未完整采集"
+        task.message = "基础数据与分析已完成" if not incomplete else "基础数据已保存，部分活动模块采集或事件校验不完整"
         task.finished_at = now
         task.heartbeat_at = task.finished_at
         task.lease_until = None
@@ -355,9 +359,9 @@ def execute_task(session_factory, task_id: str, github: GitHubClient) -> None:
 
 
 def _parse(value: str | None):
-    from backend.app.core.clock import parse_github_datetime
+    from backend.app.pipeline.event_normalizer import event_date
 
-    return parse_github_datetime(value)
+    return event_date(value)
 
 
 def _collect_deep(
@@ -373,6 +377,7 @@ def _collect_deep(
     raw: dict[str, Any] = {}
     coverage: dict[str, str] = {}
     data: dict[str, list[dict[str, Any]]] = {}
+    sources: dict[str, dict] = {}
     calls = (
         ("commits", lambda callback: github.list_commits_detailed(full_name, start_iso, end_iso, on_page=callback), lambda: github.list_commits(full_name, start_iso, end_iso)),
         ("issues", lambda callback: github.list_issues_detailed(full_name, start_iso, "all", on_page=callback), lambda: github.list_issues(full_name, start_iso, "all")),
@@ -443,6 +448,25 @@ def _collect_deep(
         data[name] = result.items
         module_coverage = "complete" if result.complete and result.error_code is None else "partial"
         coverage[name] = module_coverage
+        relevant_start = end - timedelta(days=365) if name == "releases" else start
+        timestamps = []
+        for item in result.items:
+            commit = item.get("commit")
+            committer = commit.get("committer") if isinstance(commit, dict) else None
+            value = committer.get("date") if name == "commits" and isinstance(committer, dict) else item.get("updated_at") or item.get("published_at")
+            timestamps.append(_parse(value))
+        observed = [stamp for stamp in timestamps if stamp is not None]
+        sources[name] = {
+            "coverage": module_coverage, "collected_at": iso_z(utc_now()),
+            "requested_interval": [iso_z(relevant_start), iso_z(end)],
+            "observed_interval": [iso_z(min(observed)), iso_z(max(observed))] if observed else None,
+            "page_count": result.pages_fetched, "has_next": result.has_next,
+            "observed_records": result.observed_items,
+            "rate_limit_status": "limited" if result.rate_limited_count else "not_observed",
+            "error_code": result.error_code or ("GITHUB_MAX_PAGES" if result.has_next else None),
+            "endpoint": f"/repos/{full_name}/{name}",
+            "query": {"since": start_iso, "until": end_iso} if name == "commits" else {"state": "all", "since": start_iso, "since_semantics": "updated_at"} if name == "issues" else {"state": "closed", "sort": "updated"} if name == "pulls" else {},
+        }
         module_status = "complete" if module_coverage == "complete" else ("partial" if result.pages_fetched else "failed")
         error_code = result.error_code or ("GITHUB_MAX_PAGES" if result.has_next else None)
         if error_code:
@@ -474,14 +498,15 @@ def _collect_deep(
             rate_limited_count=result.rate_limited_count,
             timeout_count=result.timeout_count,
         )
+    raw["_meta"] = {"schema_version": 1, "sources": sources, "window_start": iso_z(start), "window_end": iso_z(end)}
     try:
         archive_json(task.repository_id, task.task_id, "deep_responses", raw)
     except OSError:
-        pass
+        logger.warning("Raw response archive unavailable task_id=%s", task.task_id)
 
     def in_window(value: str | None, lower=start, upper=end) -> bool:
         parsed = _parse(value)
-        return parsed is not None and lower <= parsed <= upper
+        return parsed is not None and lower <= parsed < upper
 
     issues = [item for item in data["issues"] if "pull_request" not in item]
     pulls = data["pulls"]
@@ -503,6 +528,8 @@ def _collect_deep(
     }
     values["coverage"] = "complete" if all(value == "complete" for value in coverage.values()) else "partial"
     values["raw"] = raw
+    values["events"] = data
+    values["sources"] = sources
     return values, values["coverage"]
 
 
