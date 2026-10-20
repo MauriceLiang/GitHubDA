@@ -25,17 +25,24 @@ export function timeSeriesOption(points: TimePoint[], unit: string, color: strin
     tooltip: {
       ...tip(t),
       trigger: 'axis',
-      axisPointer: { type: 'shadow', shadowStyle: { color: t.soft } },
+      axisPointer: { type: 'line', lineStyle: { color: t.border, width: 1 } },
       formatter: (params: unknown) => {
-        const p = (params as { axisValue: string; value: number | null }[])[0]
-        return `<div style="color:${t.muted};font-size:10.5px;font-family:${MONO};margin-bottom:3px">${p.axisValue}</div><b>${p.value ?? '未覆盖'}</b> ${p.value === null ? '' : unit}`
+        const p = (params as { axisValue: string; dataIndex: number; value: number | null }[])[0]
+        const point = points[p.dataIndex]
+        const observed = point?.value === null && point.observedValue != null
+        const value = observed ? point.observedValue : p.value
+        const note = observed ? `<div style="color:${t.ink};font-size:10px;margin-top:3px">仅显示已观察数量，覆盖不完整</div>` : ''
+        return `<div style="color:${t.muted};font-size:10.5px;font-family:${MONO};margin-bottom:3px">${p.axisValue}</div><b>${value ?? '未覆盖'}</b> ${value === null ? '' : unit}${note}`
       },
     },
     xAxis: { type: 'category', data: points.map((p) => mmdd(p.date)), ...axis(t), axisLine: { lineStyle: { color: t.border } }, splitLine: { show: false } },
     yAxis: { type: 'value', ...axis(t), axisLine: { show: false } },
     series: [{
       type: dense ? 'line' : 'bar',
-      data: points.map((p) => p.value),
+      data: points.map((p) => ({
+        value: p.value ?? p.observedValue ?? null,
+        ...(p.value === null && p.observedValue != null ? { itemStyle: { opacity: 0.55 } } : {}),
+      })),
       itemStyle: { color, borderRadius: dense ? undefined : [3, 3, 0, 0] },
       lineStyle: { color, width: 2 },
       symbol: 'circle', symbolSize: 4, showSymbol: false,
@@ -55,11 +62,16 @@ export function groupedOption(series: NamedSeries[], unit: string, colors: strin
       textStyle: { color: t.muted, fontSize: 11, fontFamily }, selectedMode: true,
     } : undefined,
     tooltip: {
-      ...tip(t), trigger: 'axis', axisPointer: { type: 'shadow', shadowStyle: { color: t.soft } },
+      ...tip(t), trigger: 'axis', axisPointer: { type: 'line', lineStyle: { color: t.border, width: 1 } },
       formatter: (params: unknown) => {
-        const rows = params as { axisValue: string; seriesName: string; value: number | null; color: string }[]
+        const rows = params as { axisValue: string; dataIndex: number; seriesName: string; value: number | null; color: string }[]
         return `<div style="color:${t.muted};font-size:10.5px;font-family:${MONO};margin-bottom:4px">${rows[0]?.axisValue}</div>` +
-          rows.map((r) => `<div style="display:flex;justify-content:space-between;gap:16px"><span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${r.color};margin-right:6px"></i>${r.seriesName}</span><b>${r.value === null ? '未覆盖' : `${r.value} ${unit}`}</b></div>`).join('')
+          rows.map((r) => {
+            const point = series.find((item) => item.label === r.seriesName)?.points[r.dataIndex]
+            const observed = point?.value === null && point.observedValue != null
+            const value = observed ? point.observedValue : r.value
+            return `<div style="display:flex;justify-content:space-between;gap:16px"><span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${r.color};margin-right:6px"></i>${r.seriesName}</span><b>${value === null ? '未覆盖' : `${value} ${unit}`}</b></div>${observed ? `<div style="color:${t.ink};font-size:10px;margin:2px 0 4px 14px">仅显示已观察数量，覆盖不完整</div>` : ''}`
+          }).join('')
       },
     },
     xAxis: { type: 'category', data: dates.map(mmdd), ...axis(t), splitLine: { show: false } },
@@ -68,7 +80,10 @@ export function groupedOption(series: NamedSeries[], unit: string, colors: strin
       : { type: 'value', ...axis(t), axisLine: { show: false } },
     series: series.map((s, i) => ({
       name: s.label, type: 'bar', barGap: '12%', barMaxWidth: 12,
-      data: s.points.map((p) => p.value),
+      data: s.points.map((p) => ({
+        value: p.value ?? p.observedValue ?? null,
+        ...(p.value === null && p.observedValue != null ? { itemStyle: { opacity: 0.55 } } : {}),
+      })),
       itemStyle: { color: colors[i] ?? t.series[i], borderRadius: [2, 2, 0, 0] },
     })),
   }
@@ -79,7 +94,7 @@ export function histogramOption(buckets: HistogramBucket[], color: string, t: Ch
     animation: false,
     grid: { left: 40, right: 12, top: 22, bottom: 30 },
     tooltip: {
-      ...tip(t), trigger: 'axis', axisPointer: { type: 'shadow', shadowStyle: { color: t.soft } },
+      ...tip(t), trigger: 'axis', axisPointer: { type: 'line', lineStyle: { color: t.border, width: 1 } },
       formatter: (params: unknown) => {
         const p = (params as { axisValue: string; value: number }[])[0]
         return `<div style="color:${t.muted};font-size:10.5px;margin-bottom:3px">${p.axisValue}</div><b>${p.value}</b> ${unit}`
@@ -99,26 +114,64 @@ export function histogramOption(buckets: HistogramBucket[], color: string, t: Ch
 export function timelineOption(releases: ReleaseRecord[], t: ChartTheme, compact = false): EChartsOption {
   const formal = releases.filter((r) => !r.prerelease)
   const pre = releases.filter((r) => r.prerelease)
-  const data = (rows: ReleaseRecord[]) => rows.map((r) => ({ name: r.tag, value: [r.publishedAt, 1], itemStyle: { color: r.prerelease ? t.panel : t.series[2], borderColor: r.prerelease ? t.series[3] : t.series[2], borderWidth: 2 } }))
+  const releaseTimes = releases.map((release) => Date.parse(release.publishedAt)).filter(Number.isFinite)
+  const earliest = Math.min(...releaseTimes)
+  const latest = Math.max(...releaseTimes)
+  const span = latest - earliest
+  const start = span > 90 * 24 * 60 * 60 * 1000 ? Math.max(0, (latest - 90 * 24 * 60 * 60 * 1000 - earliest) / span * 100) : 0
+  const releasesByDate = new Map<string, ReleaseRecord[]>()
+  for (const release of releases) {
+    const date = release.publishedAt.slice(0, 10)
+    releasesByDate.set(date, [...(releasesByDate.get(date) ?? []), release])
+  }
+  const verticalOffset = new Map<ReleaseRecord, number>()
+  for (const sameDay of releasesByDate.values()) {
+    const step = Math.min(0.18, 1.3 / Math.max(1, sameDay.length - 1))
+    sameDay.forEach((release, index) => verticalOffset.set(release, (index - (sameDay.length - 1) / 2) * step))
+  }
+  const data = (rows: ReleaseRecord[]) => rows.map((r) => ({ name: r.tag, value: [r.publishedAt, 1 + (verticalOffset.get(r) ?? 0)], itemStyle: { color: r.prerelease ? t.panel : t.series[2], borderColor: r.prerelease ? t.series[3] : t.series[2], borderWidth: 2 } }))
   return {
     animation: false,
-    grid: { left: 20, right: 20, top: 34, bottom: 28 },
+    grid: { left: 20, right: 20, top: 22, bottom: compact ? 28 : 50 },
     tooltip: {
       ...tip(t),
+      trigger: 'item',
       formatter: (params: unknown) => {
-        const p = (params as { name: string; value: [string, number]; data: { itemStyle: { color: string } } }[])[0]
-        return `<div style="font-family:${MONO};font-size:11px">${p.name}</div><div style="color:${t.muted};font-size:11px;margin-top:2px">${p.value[0]}</div>`
+        const p = (Array.isArray(params) ? params[0] : params) as { name?: string; seriesName?: string; value?: [string | number, number] } | undefined
+        if (!p) return ''
+        const escape = (value: string) => value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!)
+        const date = String(p.value?.[0] ?? '').slice(0, 10)
+        return `<div style="font-family:${MONO};font-size:11px">${escape(p.name ?? 'Release')}</div><div style="color:${t.ink};font-size:11px;margin-top:2px">${escape(date)} · ${escape(p.seriesName ?? '')}</div>`
       },
     },
     xAxis: {
       type: 'time', ...axis(t), splitLine: { show: false },
-      axisLabel: { show: false },
-      axisTick: { show: false },
+      splitNumber: 5,
+      axisLabel: {
+        show: !compact,
+        hideOverlap: true,
+        color: t.ink,
+        formatter: (value: number) => {
+          const date = new Date(value)
+          return `${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`
+        },
+      },
+      axisTick: { show: !compact },
     },
     yAxis: { type: 'value', min: 0, max: 2, show: false },
+    dataZoom: compact || releases.length < 2 ? undefined : [
+      { type: 'inside', xAxisIndex: 0, filterMode: 'none', start, end: 100, zoomOnMouseWheel: true, moveOnMouseWheel: true, moveOnMouseMove: true },
+      {
+        type: 'slider', xAxisIndex: 0, filterMode: 'none', start, end: 100,
+        height: 14, bottom: 1, showDetail: false, showDataShadow: false, brushSelect: false,
+        borderColor: t.border, backgroundColor: t.soft,
+        fillerColor: t.dark ? 'rgba(242,148,194,.2)' : 'rgba(206,63,124,.16)',
+        handleStyle: { color: t.series[2], borderColor: t.border },
+      },
+    ],
     series: [
-      { name: '正式发布', type: 'scatter', symbolSize: compact ? 9 : 11, data: data(formal), label: { show: !compact, position: 'top', formatter: (p: { name: string }) => p.name, color: t.muted, fontSize: 9.5, fontFamily: MONO } },
-      { name: '预发布', type: 'scatter', symbolSize: compact ? 8 : 10, data: data(pre) },
+      { name: '正式发布', type: 'scatter', symbolSize: compact ? 9 : 11, data: data(formal), emphasis: { scale: true }, label: { show: !compact && formal.length <= 8, position: 'top', formatter: (p: { name: string }) => p.name, color: t.muted, fontSize: 9.5, fontFamily: MONO } },
+      { name: '预发布', type: 'scatter', symbolSize: compact ? 8 : 10, data: data(pre), emphasis: { scale: true } },
     ],
   }
 }

@@ -6,6 +6,7 @@ from uuid import uuid4
 from backend.app.core.config import get_settings
 from backend.app.integrations.github.client import GitHubClient
 from backend.app.persistence.db import SessionLocal
+from backend.app.persistence.models import TaskModuleProgress
 from backend.app.worker.executor import execute_task
 from backend.app.worker.queue import claim_next_task, heartbeat
 from backend.app.worker.scheduler import start_scheduler
@@ -65,7 +66,13 @@ def main() -> None:
                 active_task["id"] = task.task_id
             logger.info("Claimed task %s for repository %s", task.task_id, task.repository_id)
             try:
-                with GitHubClient(request_id=task.task_id) as github:
+                progress_session = SessionLocal()
+                try:
+                    module_progress = progress_session.get(TaskModuleProgress, (task.task_id, "commits"))
+                    max_pages = module_progress.page_cap if module_progress else None
+                finally:
+                    progress_session.close()
+                with GitHubClient(request_id=task.task_id, max_pages=max_pages) as github:
                     execute_task(SessionLocal, task.task_id, github)
             except Exception:
                 logger.exception("Task %s failed outside executor", task.task_id)

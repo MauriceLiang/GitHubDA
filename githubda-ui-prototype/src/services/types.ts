@@ -24,6 +24,8 @@ export interface TimePoint {
   /** ISO date, the bucket start (UTC). */
   date: string
   value: number | null
+  /** Count observed in this bucket when value is withheld for incomplete coverage. */
+  observedValue?: number | null
 }
 
 export interface NamedSeries {
@@ -83,8 +85,16 @@ export interface RepositorySummary {
   description: string | null
   language: string | null
   stars: number | null
+  /** Repository profile values from the latest GitHub snapshot. */
+  forks?: number | null
   license: string | null
   topics: string[]
+  createdAt?: string | null
+  pushedAt?: string | null
+  archived?: boolean | null
+  sizeKb?: number | null
+  /** GitHub's open_issues_count includes both Issues and pull requests. */
+  openIssuesAndPrCount?: number | null
   status: RepositoryStatus
   lastAnalyzedAt: string | null
   /** % change of last 4 complete weeks vs previous 4; null when not comparable. */
@@ -132,6 +142,11 @@ export interface ReleaseRecord {
   intervalDays: number | null
   note: string
   url?: string
+}
+
+export interface ReleaseDetails {
+  name: string | null
+  body: string | null
 }
 
 export interface AuthorContribution {
@@ -246,6 +261,10 @@ export interface TaskItem {
   total?: number
   updatedAt: string
   error?: string
+}
+
+export interface CollectionSettings {
+  githubMaxPages: number
 }
 
 export interface DefinitionEntry {

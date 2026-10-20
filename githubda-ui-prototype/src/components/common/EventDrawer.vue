@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import GdButton from '@/components/ui/GdButton.vue'
 import GdDrawer from '@/components/ui/GdDrawer.vue'
+import ReleaseNotes from '@/components/common/ReleaseNotes.vue'
 import { DEFINITIONS } from '@/services/definitions'
 import { useUiStore } from '@/stores/ui'
 
@@ -43,10 +44,20 @@ const subtitle = computed(() => ui.drawerKind === 'commits'
 
     <template v-else-if="ui.drawerKind === 'release'">
       <dl class="divide-y divide-line text-[12.5px]">
-        <div class="grid grid-cols-[110px_1fr] gap-2.5 py-2.5"><dt class="text-muted">发布时间</dt><dd class="m-0">{{ payload.date ?? '—' }}</dd></div>
+        <div class="grid grid-cols-[110px_1fr] gap-2.5 py-2.5"><dt class="text-muted">发布时间</dt><dd class="m-0 font-mono text-ink">{{ payload.date ?? '—' }}</dd></div>
         <div class="grid grid-cols-[110px_1fr] gap-2.5 py-2.5"><dt class="text-muted">类型</dt><dd class="m-0">{{ payload.type ?? '正式发布' }}</dd></div>
         <div class="grid grid-cols-[110px_1fr] gap-2.5 py-2.5"><dt class="text-muted">相邻间隔</dt><dd class="m-0">{{ payload.interval ?? '—' }}</dd></div>
       </dl>
+      <section class="mt-4">
+        <h3 class="m-0 text-[13px] font-semibold text-ink">发布说明</h3>
+        <p v-if="payload.bodyStatus === 'loading'" class="mt-2 text-[12.5px] text-muted">正在读取版本发布说明…</p>
+        <p v-else-if="payload.bodyStatus === 'error'" class="mt-2 text-[12.5px] leading-relaxed text-warnfg">{{ payload.bodyError }}</p>
+        <template v-else>
+          <div v-if="payload.releaseName" class="mt-2 text-[12.5px] font-medium text-ink">{{ payload.releaseName }}</div>
+          <ReleaseNotes v-if="payload.body" :body="payload.body" class="mt-2 max-h-[55vh] overflow-auto rounded-md bg-soft/50 px-3 py-2.5 text-[12.5px] leading-relaxed text-ink" />
+          <p v-else class="mt-2 text-[12.5px] text-muted">此版本没有填写发布说明。</p>
+        </template>
+      </section>
     </template>
 
     <template #footer>

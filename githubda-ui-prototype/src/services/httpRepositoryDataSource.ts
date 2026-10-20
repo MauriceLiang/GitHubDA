@@ -1,6 +1,6 @@
 import type {
-  ComparisonBundle, ComparisonEntry, Coverage, Granularity, HistogramResult, ReleaseRecord,
-  Metric, RepositoryAnalysis, RepositoryStatus, RepositorySummary,
+  CollectionSettings, ComparisonBundle, ComparisonEntry, Coverage, Granularity, HistogramResult, ReleaseDetails, ReleaseRecord,
+  Metric, Observation, RepositoryAnalysis, RepositoryStatus, RepositorySummary,
   ResearchDataset, ResearchGroup, ResearchScatterPoint, TaskItem, TaskStatus, TimePoint, TimeWindow,
 } from './types'
 import type { RepositoryDataSource } from './repositoryDataSource'
@@ -104,8 +104,14 @@ function mapRepository(value: Record<string, any>, extras: Record<string, any> =
     description: textOrNull(raw.description),
     language: textOrNull(raw.language),
     stars: numberOrNull(raw.stars),
+    forks: numberOrNull(raw.forks),
     license: textOrNull(value.license_spdx),
     topics: Array.isArray(value.topics) ? value.topics.map(String) : [],
+    createdAt: shortDate(raw.created_at),
+    pushedAt: shortDate(raw.pushed_at),
+    archived: typeof raw.archived === 'boolean' ? raw.archived : null,
+    sizeKb: numberOrNull(value.size_kb),
+    openIssuesAndPrCount: numberOrNull(value.open_issues_and_pr_count),
     status: mapStatus(raw.analysis_status),
     lastAnalyzedAt: shortDate(raw.last_successful_collection_at),
     activityDelta: null,
@@ -120,10 +126,17 @@ function mapCoverage(quality: Record<string, any> | undefined, label: string): C
   if (quality.coverage === 'partial' || quality.status === 'partial' || quality.status === 'insufficient_samples') {
     return { state: 'partial', label: quality.status === 'insufficient_samples' ? '样本不足' : '部分覆盖', detail: qualityReason(quality.reason) }
   }
+  if (quality.limit_reached === true) {
+    return { state: 'complete', label: '按设置完成', detail: qualityReason(quality.reason) }
+  }
   return { state: 'complete', label: '完整覆盖' }
 }
 function mapPoints(value: unknown, window: TimeWindow): TimePoint[] {
-  const points = array(value).map((item) => ({ date: String(item.start ?? '').slice(0, 10), value: numberOrNull(item.value) }))
+  const points = array(value).map((item) => ({
+    date: String(item.start ?? '').slice(0, 10),
+    value: numberOrNull(item.value),
+    observedValue: numberOrNull(item.observed_events),
+  }))
   if (!points.length) return points
   const end = Date.parse(`${points[points.length - 1].date}T00:00:00Z`)
   if (!Number.isFinite(end)) return points
@@ -145,6 +158,57 @@ function durationHistogram(metric: Record<string, any> | undefined, label: strin
     note: qualityReason(quality.reason),
   }
 }
+function buildObservations(commit: Record<string, any>, issue: Record<string, any>, pull: Record<string, any>, release: Record<string, any>, limitations: unknown): Observation[] {
+  const observations: Observation[] = []
+  const commitQuality = object(commit.quality)
+  const recent = numberOrNull(commit.recent_4w)
+  const previous = numberOrNull(commit.previous_4w)
+  const change = numberOrNull(commit.change_rate_pct)
+  if (commitQuality.status === 'ready' && recent !== null && previous !== null) {
+    const comparison = change === null
+      ? `前 4 周为 ${previous.toLocaleString('en-US')} 次；基期为零，不计算变化率`
+      : `较前 4 周${change >= 0 ? '增加' : '减少'} ${Math.abs(change).toFixed(1)}%（${previous.toLocaleString('en-US')} → ${recent.toLocaleString('en-US')} 次）`
+    observations.push({
+      id: 'commit-trend',
+      text: `近 4 个完整周有 ${recent.toLocaleString('en-US')} 次提交，${comparison}。`,
+      evidence: '主要数据 · 8 个完整自然周对比',
+    })
+  }
+
+  const addDurationObservation = (metric: Record<string, any>, label: string, id: string) => {
+    const quality = object(metric.quality)
+    const sampleSize = numberOrNull(quality.valid_samples) ?? 0
+    const medianHours = numberOrNull(metric.median_hours)
+    const p90Hours = numberOrNull(metric.p90_hours)
+    if (!['ready', 'partial'].includes(String(quality.status)) || sampleSize < 10 || medianHours === null) return
+    const partialNote = quality.coverage === 'partial' ? '（仅已观察样本，覆盖不完整）' : ''
+    const p90 = p90Hours === null ? '' : `，P90 ${Number((p90Hours / 24).toFixed(1))} 天`
+    observations.push({
+      id,
+      text: `${label}耗时中位数 ${Number((medianHours / 24).toFixed(1))} 天${p90}（有效样本 n=${sampleSize.toLocaleString('en-US')}）${partialNote}。`,
+      evidence: `主要数据 · ${label} · 有效样本 n≥10`,
+    })
+  }
+  addDurationObservation(issue, 'Issue 关闭', 'issue-duration')
+  addDurationObservation(pull, 'PR 合并', 'pr-duration')
+
+  const releaseQuality = object(release.quality)
+  const releaseCount = numberOrNull(release.release_count) ?? numberOrNull(releaseQuality.valid_samples)
+  const medianInterval = numberOrNull(release.median_interval_days)
+  if (['ready', 'partial'].includes(String(releaseQuality.status)) && releaseCount !== null && releaseCount >= 2 && medianInterval !== null) {
+    const partialNote = releaseQuality.coverage === 'partial' ? '（仅已观察样本，覆盖不完整）' : ''
+    observations.push({
+      id: 'release-cadence',
+      text: `近 365 天有 ${releaseCount.toLocaleString('en-US')} 次正式 Release，中位发布间隔 ${Number(medianInterval.toFixed(1))} 天${partialNote}。`,
+      evidence: '主要数据 · 至少 2 次正式 Release',
+    })
+  }
+
+  const limitationItems = Array.isArray(limitations)
+    ? limitations.map((text, index) => ({ id: `limitation-${index}`, text: String(text), evidence: '分析限制' }))
+    : []
+  return [...observations, ...limitationItems]
+}
 function summaryMetric(id: string, label: string, value: number | null, unit: string, note: string, sampleSize?: number): Metric {
   return { id, label, value, unit, note, sampleSize }
 }
@@ -156,6 +220,19 @@ function statusFromInsights(status: unknown): RepositoryStatus | null {
 }
 
 export class HttpRepositoryDataSource implements RepositoryDataSource {
+  async getCollectionSettings(): Promise<CollectionSettings> {
+    const settings = await data<{ github_max_pages: number }>('/settings')
+    return { githubMaxPages: settings.github_max_pages }
+  }
+
+  async saveCollectionSettings(settings: CollectionSettings): Promise<CollectionSettings> {
+    const saved = await data<{ github_max_pages: number }>('/settings', {
+      method: 'POST',
+      body: JSON.stringify({ github_max_pages: settings.githubMaxPages }),
+    })
+    return { githubMaxPages: saved.github_max_pages }
+  }
+
   async listRepositories(): Promise<RepositorySummary[]> {
     const result = await data<{ items: Record<string, any>[] }>('/library/repositories?sort=last_collected&order=desc&per_page=100')
     return result.items.map((item) => mapRepository(item))
@@ -227,8 +304,9 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
     const pullCoverage = mapCoverage(pullQuality, 'PR')
     const releaseCoverage = mapCoverage(releaseQuality, 'Release')
     const coverages = [commitsCoverage, issueCoverage, pullCoverage, releaseCoverage]
+    const pageLimitReached = [commitQuality, issueQuality, pullQuality, releaseQuality].some((quality) => quality.limit_reached === true)
     const coverage: Coverage = coverages.every((item) => item.state === 'complete')
-      ? { state: 'complete', label: '完整覆盖' }
+      ? { state: 'complete', label: pageLimitReached ? '按设置完成' : '完整覆盖', detail: pageLimitReached ? '至少一个活动接口达到用户设置的页数上限，未请求后续页。' : undefined }
       : coverages.every((item) => item.state === 'missing')
         ? { state: 'missing', label: '未采集', detail: result.limitations?.[0] }
         : { state: 'partial', label: '部分覆盖', detail: coverages.filter((item) => item.state !== 'complete').map((item) => item.label).join(' · ') }
@@ -279,11 +357,7 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
       collectedAt,
       limitation: qualityReason(quality.reason),
     })
-    const observations = (Array.isArray(result.limitations) ? result.limitations : []).map((text: unknown, index: number) => ({
-      id: `limitation-${index}`,
-      text: String(text),
-      evidence: '分析限制',
-    }))
+    const observations = buildObservations(commit, issue, pull, release, result.limitations)
     return {
       repository,
       metrics,
@@ -301,6 +375,14 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
       coverage,
       collectedAt,
       observations,
+    }
+  }
+
+  async getReleaseDetails(repositoryIdValue: string, releaseId: string): Promise<ReleaseDetails> {
+    const detail = await data<Record<string, unknown>>(`/repositories/${repositoryId(repositoryIdValue)}/releases/${encodeURIComponent(releaseId)}`)
+    return {
+      name: textOrNull(detail.name),
+      body: typeof detail.body === 'string' && detail.body ? detail.body : null,
     }
   }
 

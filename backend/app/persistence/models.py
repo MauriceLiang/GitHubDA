@@ -214,6 +214,14 @@ class RequestIdempotency(Base):
     status_code: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class ApplicationSetting(Base):
+    __tablename__ = "application_settings"
+
+    setting_key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    setting_value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[object] = mapped_column(DateTime, default=utc_now, nullable=False)
+
+
 class RepositoryActivityEvent(Base):
     __tablename__ = "repository_activity_events"
     __table_args__ = (

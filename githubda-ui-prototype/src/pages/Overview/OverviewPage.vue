@@ -147,16 +147,18 @@ async function submit() {
         </div>
       </GdCard>
 
-      <GdCard>
+      <GdCard class="h-[320px] overflow-hidden">
         <div>
           <h3 class="m-0 text-[15.5px] font-semibold">正在进行的分析</h3>
           <p class="mt-0.5 text-[12px] text-muted">离开页面不会中断采集</p>
         </div>
-        <div v-if="activeTasks.length" class="flex flex-col divide-y divide-line">
-          <RouterLink v-for="task in activeTasks" :key="task.id" to="/tasks" class="flex items-center justify-between gap-3 py-2.5 text-[12px] hover:bg-soft/40">
-            <span class="min-w-0 truncate">{{ task.repository }}</span>
-            <span class="shrink-0 text-muted">{{ task.status === 'running' ? '采集中' : '排队中' }}</span>
-          </RouterLink>
+        <div v-if="activeTasks.length" class="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
+          <div class="flex flex-col divide-y divide-line">
+            <RouterLink v-for="task in activeTasks" :key="task.id" to="/tasks" class="flex items-center justify-between gap-3 py-2.5 text-[12px] hover:bg-soft/40">
+              <span class="min-w-0 truncate">{{ task.repository }}</span>
+              <span class="shrink-0 text-muted">{{ task.status === 'running' ? '采集中' : '排队中' }}</span>
+            </RouterLink>
+          </div>
         </div>
         <p v-else class="text-[12px] text-muted">当前没有进行中的任务。</p>
         <RouterLink to="/tasks" class="gd-link w-fit text-[12px]"><CalendarDays :size="13" /> 查看任务中心</RouterLink>

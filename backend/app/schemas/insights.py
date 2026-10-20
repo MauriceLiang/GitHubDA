@@ -9,6 +9,7 @@ class MetricQuality(BaseModel):
     coverage: Literal["complete", "partial", "not_collected"]
     valid_samples: int = Field(ge=0)
     reason: str | None
+    limit_reached: bool = False
     rejected_records: int = 0
     invalid_event_times: int = 0
 
@@ -63,6 +64,12 @@ class DurationMetric(InsightMetric):
 class ReleasePoint(BaseModel):
     id: str
     published_at: str
+
+
+class ReleaseDetail(BaseModel):
+    id: str
+    name: str | None
+    body: str | None
 
 
 class ReleaseMetric(InsightMetric):

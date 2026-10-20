@@ -89,7 +89,7 @@ function percent(task: TaskItem): number | null {
       </div>
     </section>
 
-    <GdCard>
+    <GdCard class="h-[520px] overflow-hidden">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 class="m-0 text-[15.5px] font-semibold">采集任务</h3>
@@ -98,34 +98,36 @@ function percent(task: TaskItem): number | null {
         <GdButton variant="outline" size="sm" :disabled="loading" @click="refresh">刷新</GdButton>
       </div>
 
-      <p v-if="error" class="py-3 text-[12px] text-danger">任务加载失败：{{ error }}</p>
-      <div v-else-if="loading" class="flex flex-col gap-2">
+      <div v-if="error" class="min-h-0 flex-1 overflow-y-auto overscroll-contain py-3 text-[12px] text-danger">任务加载失败：{{ error }}</div>
+      <div v-else-if="loading" class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <div v-for="i in 4" :key="i" class="h-16 animate-pulse rounded bg-track/60" />
       </div>
-      <div v-else-if="!tasks.length" class="py-10 text-center text-[12px] text-muted">当前没有采集任务。可以从总览输入仓库并开始分析。</div>
+      <div v-else-if="!tasks.length" class="min-h-0 flex-1 overflow-y-auto overscroll-contain py-10 text-center text-[12px] text-muted">当前没有采集任务。可以从总览输入仓库并开始分析。</div>
 
       <template v-else>
         <div class="hidden grid-cols-[minmax(190px,1.6fr)_96px_92px_minmax(280px,1.8fr)_64px_92px] items-center gap-4 border-b border-line px-1 pb-2 text-[11.5px] text-muted lg:grid">
           <span>仓库 / 阶段</span><span>状态</span><span>更新时间</span><span>当前阶段</span><span class="text-right">进度</span><span />
         </div>
-        <div class="divide-y divide-line">
-          <div v-for="task in tasks" :key="task.id" class="grid grid-cols-1 items-center gap-3 py-3 lg:grid-cols-[minmax(190px,1.6fr)_96px_92px_minmax(280px,1.8fr)_64px_92px] lg:gap-4">
-            <div class="min-w-0">
-              <div class="truncate text-[13px] font-semibold">{{ task.repository }}</div>
-              <div class="text-[11.5px] text-muted">{{ moduleLabel[task.module] ?? task.module }}</div>
-            </div>
-            <div><GdBadge :variant="statusMeta[task.status].variant">{{ statusMeta[task.status].text }}</GdBadge></div>
-            <div class="text-[11.5px] text-muted">{{ task.updatedAt }}</div>
-            <div class="min-w-0">
-              <div class="truncate text-[11.5px] text-muted" :title="task.stage">{{ task.error ?? task.stage }}</div>
-              <div v-if="percent(task) !== null" class="mt-1.5 h-1 overflow-hidden rounded bg-track">
-                <div class="h-full rounded bg-ink transition-[width] duration-500" :style="{ width: `${percent(task)}%` }" />
+        <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
+          <div class="divide-y divide-line">
+            <div v-for="task in tasks" :key="task.id" class="grid grid-cols-1 items-center gap-3 py-3 lg:grid-cols-[minmax(190px,1.6fr)_96px_92px_minmax(280px,1.8fr)_64px_92px] lg:gap-4">
+              <div class="min-w-0">
+                <div class="truncate text-[13px] font-semibold">{{ task.repository }}</div>
+                <div class="text-[11.5px] text-muted">{{ moduleLabel[task.module] ?? task.module }}</div>
               </div>
-            </div>
-            <div class="text-right font-mono text-[11.5px] text-muted">{{ percent(task) === null ? '—' : `${Math.round(percent(task)!)}%` }}</div>
-            <div class="flex justify-start lg:justify-end">
-              <GdButton v-if="task.status === 'failed' || task.status === 'partial'" variant="outline" size="sm" class="min-w-[78px]" :disabled="retrying === task.id" @click="retry(task)">{{ retrying === task.id ? '排队中…' : '重试' }}</GdButton>
-              <GdButton v-else variant="ghost" size="sm" class="min-w-[78px]" @click="view(task)">查看仓库</GdButton>
+              <div><GdBadge :variant="statusMeta[task.status].variant">{{ statusMeta[task.status].text }}</GdBadge></div>
+              <div class="text-[11.5px] text-muted">{{ task.updatedAt }}</div>
+              <div class="min-w-0">
+                <div class="truncate text-[11.5px] text-muted" :title="task.stage">{{ task.error ?? task.stage }}</div>
+                <div v-if="percent(task) !== null" class="mt-1.5 h-1 overflow-hidden rounded bg-track">
+                  <div class="h-full rounded bg-ink transition-[width] duration-500" :style="{ width: `${percent(task)}%` }" />
+                </div>
+              </div>
+              <div class="text-right font-mono text-[11.5px] text-muted">{{ percent(task) === null ? '—' : `${Math.round(percent(task)!)}%` }}</div>
+              <div class="flex justify-start lg:justify-end">
+                <GdButton v-if="task.status === 'failed' || task.status === 'partial'" variant="outline" size="sm" class="min-w-[78px]" :disabled="retrying === task.id" @click="retry(task)">{{ retrying === task.id ? '排队中…' : '重试' }}</GdButton>
+                <GdButton v-else variant="ghost" size="sm" class="min-w-[78px]" @click="view(task)">查看仓库</GdButton>
+              </div>
             </div>
           </div>
         </div>

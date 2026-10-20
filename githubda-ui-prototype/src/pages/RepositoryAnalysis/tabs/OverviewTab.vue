@@ -30,6 +30,12 @@ function selectCommit(dataIndex: number) {
   const point = commitsPoints.value[dataIndex]
   if (point && point.value !== null) emit('select-week', { date: point.date, count: point.value })
 }
+
+function repositorySizeLabel(sizeKb: number | null | undefined) {
+  if (sizeKb == null) return '—'
+  if (sizeKb >= 1024) return `${(sizeKb / 1024).toLocaleString('zh-CN', { maximumFractionDigits: 1 })} MB`
+  return `${sizeKb.toLocaleString('zh-CN')} KB`
+}
 </script>
 
 <template>
@@ -102,26 +108,44 @@ function selectCommit(dataIndex: number) {
   </div>
 
   <div class="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-    <GdCard>
+    <GdCard class="h-[360px] overflow-hidden">
       <div>
         <h3 class="m-0 text-[15.5px] font-semibold">主要数据观察</h3>
-        <p class="mt-0.5 text-[12px] text-muted">仅在对比窗口完整时生成 · 可点开依据</p>
+        <p class="mt-0.5 text-[12px] text-muted">完整 8 周提交趋势、Issue/PR 耗时（n≥10）、正式发布节奏（至少 2 次）；部分覆盖只描述已观察样本。</p>
       </div>
-      <ObservationList :observations="analysis.observations" />
+      <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
+        <ObservationList :observations="analysis.observations" />
+      </div>
     </GdCard>
 
-    <GdCard>
+    <GdCard class="h-[360px] overflow-hidden">
       <div>
         <h3 class="m-0 text-[15.5px] font-semibold">基础资料</h3>
         <p class="mt-0.5 text-[12px] text-muted">采集时点快照</p>
       </div>
-      <div class="grid grid-cols-2 gap-y-3">
-        <div><div class="text-[11px] text-muted">Stars</div><div class="mt-0.5 text-[13px] font-medium">{{ analysis.repository.stars?.toLocaleString('en-US') ?? '—' }}</div></div>
-        <div class="border-l border-line pl-3.5"><div class="text-[11px] text-muted">主要语言</div><div class="mt-0.5 text-[13px] font-medium">{{ analysis.repository.language ?? '—' }}</div></div>
-        <div><div class="text-[11px] text-muted">许可证</div><div class="mt-0.5 text-[13px] font-medium">{{ analysis.repository.license ?? '—' }}</div></div>
-        <div class="border-l border-line pl-3.5"><div class="text-[11px] text-muted">Topics</div><div class="mt-0.5 text-[13px] font-medium">{{ analysis.repository.topics.join(' / ') || '—' }}</div></div>
+      <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
+        <div class="space-y-2">
+          <div class="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-3">
+            <div><div class="text-[11px] text-muted">Stars</div><div class="mt-0.5 text-[13px] font-medium">{{ analysis.repository.stars?.toLocaleString('en-US') ?? '—' }}</div></div>
+            <div><div class="text-[11px] text-muted">Forks</div><div class="mt-0.5 text-[13px] font-medium">{{ analysis.repository.forks?.toLocaleString('en-US') ?? '—' }}</div></div>
+            <div><div class="text-[11px] text-muted">主要语言</div><div class="mt-0.5 text-[13px] font-medium">{{ analysis.repository.language ?? '—' }}</div></div>
+            <div><div class="text-[11px] text-muted">许可证</div><div class="mt-0.5 text-[13px] font-medium">{{ analysis.repository.license ?? '—' }}</div></div>
+            <div><div class="text-[11px] text-muted">开放 Issue / PR</div><div class="mt-0.5 text-[13px] font-medium">{{ analysis.repository.openIssuesAndPrCount?.toLocaleString('en-US') ?? '—' }}</div></div>
+            <div><div class="text-[11px] text-muted">仓库大小</div><div class="mt-0.5 text-[13px] font-medium">{{ repositorySizeLabel(analysis.repository.sizeKb) }}</div></div>
+            <div><div class="text-[11px] text-muted">创建日期</div><div class="mt-0.5 text-[13px] font-medium">{{ analysis.repository.createdAt ?? '—' }}</div></div>
+            <div><div class="text-[11px] text-muted">最近推送</div><div class="mt-0.5 text-[13px] font-medium">{{ analysis.repository.pushedAt ?? '—' }}</div></div>
+            <div><div class="text-[11px] text-muted">归档状态</div><div class="mt-0.5 text-[13px] font-medium">{{ analysis.repository.archived == null ? '—' : analysis.repository.archived ? '已归档' : '未归档' }}</div></div>
+          </div>
+          <div class="border-t border-line pt-3">
+            <div class="text-[11px] text-muted">Topics</div>
+            <div v-if="analysis.repository.topics.length" class="mt-1.5 flex flex-wrap gap-1.5">
+              <span v-for="topic in analysis.repository.topics" :key="topic" class="rounded-md bg-track px-2 py-1 text-[11px] text-ink/75">{{ topic }}</span>
+            </div>
+            <p v-else class="mt-1 text-[12px] text-muted">未设置 Topics</p>
+          </div>
+          <p class="m-0 text-[11px] leading-relaxed text-muted">Stars / Forks 为背景信息，不参与开发活动分析；开放数量包含 PR。</p>
+        </div>
       </div>
-      <p class="text-[11px] text-muted">Star 与 Fork 为背景信息，不参与开发活动与协作分析。</p>
     </GdCard>
   </div>
 </template>

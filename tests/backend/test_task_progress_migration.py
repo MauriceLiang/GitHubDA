@@ -59,7 +59,8 @@ def test_0001_database_upgrades_to_task_progress_without_losing_tasks(tmp_path, 
         ).one()
         assert row == ("legacy-task", "succeeded", 75.0, "unknown", None, None)
         assert inspect(connection).has_table("task_module_progress")
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0003_activity_insights"
+        assert inspect(connection).has_table("application_settings")
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0004_application_settings"
     upgraded.dispose()
 
 
@@ -80,6 +81,7 @@ def test_fresh_database_upgrades_and_insights_downgrade_preserves_old_data(tmp_p
         with engine.connect() as connection:
             assert connection.exec_driver_sql('SELECT full_name FROM repositories WHERE repository_id=1').scalar_one() == 'fixture/legacy'
             assert inspect(connection).has_table('repository_activity_events')
+            assert inspect(connection).has_table('application_settings')
         engine.dispose()
     finally:
         get_settings.cache_clear()

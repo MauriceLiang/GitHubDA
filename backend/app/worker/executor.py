@@ -15,7 +15,7 @@ from backend.app.pipeline.cleaner import clean_repository_profile
 from backend.app.pipeline.feature_builder import build_profile_metrics
 from backend.app.pipeline.quality import overall_coverage
 from backend.app.pipeline.raw_archive import archive_json
-from backend.app.services.insights import persist_insights
+from backend.app.services.insights import PAGE_LIMIT_NOTE, persist_insights
 from backend.app.services.repositories import latest_analysis, latest_snapshot, repository_from_github
 from backend.app.worker.queue import update_phase
 from backend.app.worker.progress import TaskProgressReporter
@@ -249,6 +249,9 @@ def execute_task(session_factory, task_id: str, github: GitHubClient) -> None:
         limitations = ["关注度指标不等于代码质量"]
         if task.depth == "deep" and depth_coverage == "partial":
             limitations.append("部分深度活动端点或分页未能完整采集")
+        page_limit_reached = bool(activity and any(source.get("limit_reached") for source in activity["sources"].values()))
+        if page_limit_reached:
+            limitations.append(PAGE_LIMIT_NOTE)
         _update_phase(session, task, reporter, "persisting", "正在保存快照、分析结果与来源记录", 98 if reporter else None)
 
         session.rollback()
@@ -333,7 +336,11 @@ def execute_task(session_factory, task_id: str, github: GitHubClient) -> None:
         else:
             task.progress_kind = "unknown"
             task.progress_percent = None
-        task.message = "基础数据与分析已完成" if not incomplete else "基础数据已保存，部分活动模块采集或事件校验不完整"
+        task.message = (
+            "已按用户设置的页数上限完成采集与分析" if page_limit_reached and not incomplete
+            else "基础数据与分析已完成" if not incomplete
+            else "基础数据已保存，部分活动模块采集或事件校验不完整"
+        )
         task.finished_at = now
         task.heartbeat_at = task.finished_at
         task.lease_until = None
@@ -446,7 +453,13 @@ def _collect_deep(
             )
 
         data[name] = result.items
-        module_coverage = "complete" if result.complete and result.error_code is None else "partial"
+        limit_reached = (
+            result.has_next
+            and result.error_code is None
+            and page_cap is not None
+            and result.pages_fetched == page_cap
+        )
+        module_coverage = "complete" if (result.complete or limit_reached) and result.error_code is None else "partial"
         coverage[name] = module_coverage
         relevant_start = end - timedelta(days=365) if name == "releases" else start
         timestamps = []
@@ -461,14 +474,15 @@ def _collect_deep(
             "requested_interval": [iso_z(relevant_start), iso_z(end)],
             "observed_interval": [iso_z(min(observed)), iso_z(max(observed))] if observed else None,
             "page_count": result.pages_fetched, "has_next": result.has_next,
+            "page_cap": page_cap, "limit_reached": limit_reached,
             "observed_records": result.observed_items,
             "rate_limit_status": "limited" if result.rate_limited_count else "not_observed",
-            "error_code": result.error_code or ("GITHUB_MAX_PAGES" if result.has_next else None),
+            "error_code": result.error_code or ("GITHUB_MAX_PAGES" if result.has_next and not limit_reached else None),
             "endpoint": f"/repos/{full_name}/{name}",
             "query": {"since": start_iso, "until": end_iso} if name == "commits" else {"state": "all", "since": start_iso, "since_semantics": "updated_at"} if name == "issues" else {"state": "closed", "sort": "updated"} if name == "pulls" else {},
         }
         module_status = "complete" if module_coverage == "complete" else ("partial" if result.pages_fetched else "failed")
-        error_code = result.error_code or ("GITHUB_MAX_PAGES" if result.has_next else None)
+        error_code = result.error_code or ("GITHUB_MAX_PAGES" if result.has_next and not limit_reached else None)
         if error_code:
             raw[name] = {
                 "pages": result.raw_pages,

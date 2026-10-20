@@ -1,6 +1,6 @@
 import type {
   AuthorContribution, CommitEvent, ComparisonBundle, ComparisonEntry, Granularity, HistogramResult,
-  IssueRecord, Metric, PullRequestRecord, ReleaseRecord, RepositoryAnalysis, RepositorySummary,
+  IssueRecord, Metric, PullRequestRecord, ReleaseDetails, ReleaseRecord, RepositoryAnalysis, RepositorySummary,
   ResearchDataset, TaskItem, TimePoint, TimeSeriesResult, TimeWindow,
 } from './types'
 import type { RepositoryDataSource } from './repositoryDataSource'
@@ -167,7 +167,7 @@ function releasesOf(seed: RepoSeed): ReleaseRecord[] {
 }
 
 function observationsOf(seed: RepoSeed) {
-  return seed.observations.map((text, i) => ({ id: `obs-${seed.id}-${i}`, text, evidence: '查看对应时间区间的事件明细' }))
+  return seed.observations.map((text, i) => ({ id: `obs-${seed.id}-${i}`, text, evidence: '主要数据 · 演示统计窗口' }))
 }
 
 function summaryOf(seed: RepoSeed): RepositorySummary {
@@ -190,6 +190,17 @@ const sha = (n: number) => ((n * 2654435761) % 0xfffffff).toString(16).padStart(
 const COMMIT_TITLES = ['feat: 周聚合改为事件日期', 'fix: 排除 PR 类型的 Issue', 'chore: 升级解析依赖', 'docs: 补充指标定义', 'refactor: 统一时间口径', 'test: 增加部分采集用例', 'perf: 聚合查询缓存']
 
 export class MockRepositoryDataSource implements RepositoryDataSource {
+  private githubMaxPages = 10
+
+  async getCollectionSettings() {
+    return { githubMaxPages: this.githubMaxPages }
+  }
+
+  async saveCollectionSettings(settings: { githubMaxPages: number }) {
+    this.githubMaxPages = settings.githubMaxPages
+    return { githubMaxPages: this.githubMaxPages }
+  }
+
   async searchRepositories(query: string) {
     const normalized = query.trim().toLowerCase()
     return REPOSITORIES.filter((seed) => seed.fullName.toLowerCase().includes(normalized))
@@ -248,6 +259,13 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
       collectedAt: `${seed.lastAnalyzedAt ?? DATASET_END} 02:14 UTC`,
       observations: observationsOf(seed),
     }
+  }
+
+  async getReleaseDetails(repositoryId: string, releaseId: string): Promise<ReleaseDetails> {
+    const seed = repoSeed(repositoryId) ?? REPOSITORIES[0]
+    const release = seed.releases.find((item) => item.tag === releaseId)
+    if (!release) throw new Error('未找到该示例 Release')
+    return { name: release.tag, body: release.note }
   }
 
   async getWeekCommits(id: string, weekStart: string): Promise<CommitEvent[]> {

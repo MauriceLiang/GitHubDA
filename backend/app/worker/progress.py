@@ -6,7 +6,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from backend.app.core.clock import utc_now
-from backend.app.core.config import get_settings
+from backend.app.services.application_settings import get_github_max_pages
 from backend.app.persistence.models import CollectionTask, TaskModuleProgress
 
 
@@ -165,6 +165,7 @@ class TaskProgressReporter:
 
 
 def initialize_attempt_progress(session: Session, task: CollectionTask, now: datetime) -> None:
+    github_max_pages = get_github_max_pages(session)
     for module in MODULE_ORDER:
         session.add(TaskModuleProgress(
             task_id=task.task_id,
@@ -172,7 +173,7 @@ def initialize_attempt_progress(session: Session, task: CollectionTask, now: dat
             status="pending",
             coverage="not_collected",
             pages_fetched=0,
-            page_cap=1 if module == "profile" else get_settings().github_max_pages,
+            page_cap=1 if module == "profile" else github_max_pages,
             observed_items=0,
             last_updated_at=now,
             attempt=task.attempt,

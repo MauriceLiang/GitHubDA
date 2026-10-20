@@ -1,14 +1,14 @@
 import csv
 import io
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from backend.app.api.dependencies import get_session
 from backend.app.api.helpers import envelope
 from backend.app.schemas.common import SuccessEnvelope
-from backend.app.schemas.insights import InsightQuality, InsightSeries, RepositoryInsights
-from backend.app.services.insights import repository_insights
+from backend.app.schemas.insights import InsightQuality, InsightSeries, ReleaseDetail, RepositoryInsights
+from backend.app.services.insights import repository_insights, repository_release_detail
 
 router = APIRouter(prefix="/repositories", tags=["insights"])
 
@@ -16,6 +16,11 @@ router = APIRouter(prefix="/repositories", tags=["insights"])
 @router.get("/{repository_id}/insights", response_model=SuccessEnvelope[RepositoryInsights])
 def insights(repository_id: int, request: Request, session: Session = Depends(get_session)):
     return envelope(request, repository_insights(session, repository_id))
+
+
+@router.get("/{repository_id}/releases/{release_id}", response_model=SuccessEnvelope[ReleaseDetail])
+def release_detail(repository_id: int, request: Request, release_id: int = Path(gt=0, lt=10**20), session: Session = Depends(get_session)):
+    return envelope(request, repository_release_detail(session, repository_id, release_id))
 
 
 @router.get("/{repository_id}/insights/series", response_model=SuccessEnvelope[InsightSeries])

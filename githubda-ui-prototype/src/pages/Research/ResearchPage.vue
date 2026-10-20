@@ -19,6 +19,8 @@ const { data, loading, error } = useAsyncData(() => source.getResearchDataset())
 const palette = ['#E2683C', '#E5A03A', '#CE3F7C', '#2E8FCB', '#B08310', '#8C6DB0', '#65A765']
 const groupItems = computed(() => (data.value?.groups ?? []).map((group, index) => ({ label: group.label, value: group.count, color: palette[index % palette.length] })))
 const issueMedianItems = computed(() => (data.value?.groups ?? []).flatMap((group, index) => group.medianCloseDays === null ? [] : [{ label: group.label, value: group.medianCloseDays, color: palette[index % palette.length] }]))
+const groupChartHeight = computed(() => Math.max(190, groupItems.value.length * 32))
+const issueMedianChartHeight = computed(() => Math.max(190, issueMedianItems.value.length * 32))
 const qualityItems = computed(() => (data.value?.quality ?? []).filter((quality) => quality.collected).map((quality) => ({ label: quality.field, value: quality.missingRate })))
 const groups = computed(() => (data.value?.groups ?? []).map((group) => group.label))
 
@@ -111,7 +113,7 @@ async function exportResearch() {
       </section>
 
       <div class="grid gap-4 lg:grid-cols-2">
-        <GdCard>
+        <GdCard class="h-[360px] overflow-hidden">
           <div class="flex items-start justify-between gap-3">
             <div>
               <h3 class="m-0 text-[15.5px] font-semibold">按主要语言分组</h3>
@@ -119,18 +121,22 @@ async function exportResearch() {
             </div>
             <span class="font-mono text-[11.5px] text-muted">n={{ data.repositoryCount }}</span>
           </div>
-          <RankChart :items="groupItems" :height="190" />
+          <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
+            <RankChart :items="groupItems" :height="groupChartHeight" />
+          </div>
           <p v-if="!data.groups.length" class="text-[11px] text-muted">当前数据集没有可展示的分组。</p>
         </GdCard>
 
-        <GdCard>
+        <GdCard class="h-[360px] overflow-hidden">
           <div class="flex items-start justify-between gap-3">
             <div>
               <h3 class="m-0 text-[15.5px] font-semibold">各语言 Issue 关闭耗时</h3>
               <p class="mt-0.5 text-[12px] text-muted">组内中位数（天）</p>
             </div>
           </div>
-          <RankChart :items="issueMedianItems" :height="190" value-suffix=" 天" />
+          <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
+            <RankChart :items="issueMedianItems" :height="issueMedianChartHeight" value-suffix=" 天" />
+          </div>
           <p v-if="!issueMedianItems.length" class="text-[11px] text-muted">没有具备有效 Issue 耗时样本的语言组。</p>
         </GdCard>
       </div>

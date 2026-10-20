@@ -132,43 +132,45 @@ async function remove(repo: RepositorySummary) {
       <GdButton v-else size="sm" :disabled="searching" @click="searchGithub">{{ searching ? '搜索中…' : '搜索 GitHub' }}</GdButton>
     </div>
 
-    <GdCard padding="sm">
+    <GdCard padding="sm" class="h-[520px] overflow-hidden">
       <div class="hidden grid-cols-[24px_1.7fr_1fr_104px_96px_76px_132px] gap-3 border-b border-line px-1 pb-2 text-[11.5px] text-muted lg:grid">
         <span />
         <span>仓库</span><span>语言 / Stars</span><span>数据状态</span><span>上次分析</span><span>活动变化</span><span />
       </div>
-      <p v-if="tab === 'library' && error" class="py-4 text-[12px] text-danger">加载仓库列表失败：{{ error }}</p>
-      <p v-else-if="tab === 'search' && searchError" class="py-4 text-[12px] text-danger">{{ searchError }}</p>
-      <div v-else-if="tab === 'library' && loading || tab === 'search' && searching" class="flex flex-col gap-2 py-2">
-        <div v-for="i in 5" :key="i" class="h-14 animate-pulse rounded bg-track/60" />
-      </div>
-      <div v-else class="divide-y divide-line">
-        <div v-for="repo in (tab === 'library' ? filtered : searchResults)" :key="repo.id" class="grid grid-cols-[24px_1fr] items-center gap-3 py-3 lg:grid-cols-[24px_1.7fr_1fr_104px_96px_76px_132px]">
-          <input v-if="tab === 'library'" type="checkbox" class="size-3.5 accent-ink" :checked="selected.includes(repo.id)" @change="toggle(repo)" />
-          <span v-else />
-          <div class="min-w-0">
-            <div class="truncate text-[13px] font-semibold">{{ repo.fullName }}</div>
-            <div class="truncate text-[11.5px] text-muted">{{ repo.description ?? '无公开简介' }}</div>
-          </div>
-          <div class="hidden text-[11.5px] text-muted lg:block">{{ repo.language ?? '语言未知' }} · ★ {{ repo.stars?.toLocaleString('en-US') ?? '—' }}</div>
-          <div class="hidden lg:block"><GdBadge :variant="statusMeta[repo.status].variant">{{ statusMeta[repo.status].text }}</GdBadge></div>
-          <div class="hidden font-mono text-[11.5px] text-muted lg:block">{{ repo.lastAnalyzedAt ?? '—' }}</div>
-          <div class="hidden font-mono text-[11.5px] lg:block" :class="repo.activityDelta === null || repo.activityDelta === 0 ? 'text-muted' : repo.activityDelta < 0 ? 'text-s1' : 'text-s3'">
-            {{ repo.activityDelta === null ? '—' : `${repo.activityDelta > 0 ? '+' : ''}${repo.activityDelta}%` }}
-          </div>
-          <div class="col-span-2 flex items-center justify-end gap-2 lg:col-span-1">
-            <RouterLink v-if="tab === 'library'"
-              :to="`/repositories/${repo.id}/overview`"
-              class="inline-flex h-7 items-center rounded-md border border-line bg-panel px-2.5 text-[12px] font-medium hover:bg-soft"
-            >
-              {{ repo.status === 'idle' ? '开始分析' : '查看分析' }}
-            </RouterLink>
-            <GdButton v-if="tab === 'library'" variant="ghost" size="sm" :disabled="busyId === repo.id" @click="remove(repo)">移除</GdButton>
-            <GdButton v-else size="sm" :disabled="repo.alreadyInLibrary || busyId === repo.id" @click="add(repo)">{{ repo.alreadyInLibrary ? '已在分析库' : busyId === repo.id ? '正在添加…' : '添加并分析' }}</GdButton>
-          </div>
+      <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
+        <p v-if="tab === 'library' && error" class="py-4 text-[12px] text-danger">加载仓库列表失败：{{ error }}</p>
+        <p v-else-if="tab === 'search' && searchError" class="py-4 text-[12px] text-danger">{{ searchError }}</p>
+        <div v-else-if="tab === 'library' && loading || tab === 'search' && searching" class="flex flex-col gap-2 py-2">
+          <div v-for="i in 5" :key="i" class="h-14 animate-pulse rounded bg-track/60" />
         </div>
-        <p v-if="tab === 'library' && !filtered.length" class="py-6 text-center text-[12px] text-muted">没有匹配的仓库。</p>
-        <p v-else-if="tab === 'search' && !searchResults.length && !searching" class="py-6 text-center text-[12px] text-muted">输入关键词并搜索 GitHub。</p>
+        <div v-else class="divide-y divide-line">
+          <div v-for="repo in (tab === 'library' ? filtered : searchResults)" :key="repo.id" class="grid grid-cols-[24px_1fr] items-center gap-3 py-3 lg:grid-cols-[24px_1.7fr_1fr_104px_96px_76px_132px]">
+            <input v-if="tab === 'library'" type="checkbox" class="size-3.5 accent-ink" :checked="selected.includes(repo.id)" @change="toggle(repo)" />
+            <span v-else />
+            <div class="min-w-0">
+              <div class="truncate text-[13px] font-semibold">{{ repo.fullName }}</div>
+              <div class="truncate text-[11.5px] text-muted">{{ repo.description ?? '无公开简介' }}</div>
+            </div>
+            <div class="hidden text-[11.5px] text-muted lg:block">{{ repo.language ?? '语言未知' }} · ★ {{ repo.stars?.toLocaleString('en-US') ?? '—' }}</div>
+            <div class="hidden lg:block"><GdBadge :variant="statusMeta[repo.status].variant">{{ statusMeta[repo.status].text }}</GdBadge></div>
+            <div class="hidden font-mono text-[11.5px] text-muted lg:block">{{ repo.lastAnalyzedAt ?? '—' }}</div>
+            <div class="hidden font-mono text-[11.5px] lg:block" :class="repo.activityDelta === null || repo.activityDelta === 0 ? 'text-muted' : repo.activityDelta < 0 ? 'text-s1' : 'text-s3'">
+              {{ repo.activityDelta === null ? '—' : `${repo.activityDelta > 0 ? '+' : ''}${repo.activityDelta}%` }}
+            </div>
+            <div class="col-span-2 flex items-center justify-end gap-2 lg:col-span-1">
+              <RouterLink v-if="tab === 'library'"
+                :to="`/repositories/${repo.id}/overview`"
+                class="inline-flex h-7 items-center rounded-md border border-line bg-panel px-2.5 text-[12px] font-medium hover:bg-soft"
+              >
+                {{ repo.status === 'idle' ? '开始分析' : '查看分析' }}
+              </RouterLink>
+              <GdButton v-if="tab === 'library'" variant="ghost" size="sm" :disabled="busyId === repo.id" @click="remove(repo)">移除</GdButton>
+              <GdButton v-else size="sm" :disabled="repo.alreadyInLibrary || busyId === repo.id" @click="add(repo)">{{ repo.alreadyInLibrary ? '已在分析库' : busyId === repo.id ? '正在添加…' : '添加并分析' }}</GdButton>
+            </div>
+          </div>
+          <p v-if="tab === 'library' && !filtered.length" class="py-6 text-center text-[12px] text-muted">没有匹配的仓库。</p>
+          <p v-else-if="tab === 'search' && !searchResults.length && !searching" class="py-6 text-center text-[12px] text-muted">输入关键词并搜索 GitHub。</p>
+        </div>
       </div>
       <div class="flex items-center justify-between pt-2 text-[11.5px] text-muted">
         <span>{{ tab === 'library' ? `分析库 ${filtered.length} 个仓库（最多加载 100 个）` : `搜索结果 ${searchResults.length} 个（最多显示 20 个）` }}</span>

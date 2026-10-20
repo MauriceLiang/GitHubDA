@@ -9,9 +9,9 @@ defineProps<{ observations: Observation[]; compact?: boolean }>()
       <span class="w-0.5 self-stretch rounded-sm" :class="index % 2 === 0 ? 'bg-s1' : 'bg-s3'" />
       <div>
         <p class="m-0 text-[12.5px] leading-relaxed">{{ item.text }}</p>
-        <button class="mt-1 text-[11px] text-muted underline underline-offset-2 hover:text-ink">{{ item.evidence }}</button>
+        <span class="mt-1 inline-block text-[11px] text-muted">{{ item.evidence }}</span>
       </div>
     </div>
-    <p v-if="!observations.length" class="text-[12px] text-muted">当前数据不足以生成可解释的变化观察。</p>
+    <p v-if="!observations.length" class="text-[12px] text-muted">当前没有满足完整窗口与有效样本要求的主要数据观察。</p>
   </div>
 </template>

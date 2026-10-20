@@ -1,5 +1,5 @@
 import type {
-  ComparisonBundle, Granularity, RepositoryAnalysis, RepositorySummary,
+  CollectionSettings, ComparisonBundle, Granularity, ReleaseDetails, RepositoryAnalysis, RepositorySummary,
   ResearchDataset, TaskItem, TimeWindow,
 } from './types'
 
@@ -10,6 +10,9 @@ import type {
  * modes both implement this interface.
  */
 export interface RepositoryDataSource {
+  getCollectionSettings(): Promise<CollectionSettings>
+  saveCollectionSettings(settings: CollectionSettings): Promise<CollectionSettings>
+
   listRepositories(): Promise<RepositorySummary[]>
   searchRepositories(query: string): Promise<(RepositorySummary & { alreadyInLibrary: boolean })[]>
   addRepository(input: string): Promise<{ repositoryId: string; taskId: string | null; existing: boolean }>
@@ -23,6 +26,7 @@ export interface RepositoryDataSource {
    * fields remain null and are never inferred from totals.
    */
   getAnalysis(id: string, window: TimeWindow, granularity: Granularity): Promise<RepositoryAnalysis>
+  getReleaseDetails(repositoryId: string, releaseId: string): Promise<ReleaseDetails>
 
   /** Drill-down: commits inside one weekly bucket. */
   /** 2–5 repositories compared with a shared window and definitions. */
