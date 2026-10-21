@@ -1,9 +1,9 @@
 {
-  "name": "githubda-ui-prototype",
+  "name": "githubda-frontend",
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "GitHubDA UI/UX prototype — Vue 3 + TypeScript + Vite + Tailwind 4 + ECharts",
+  "description": "GitHubDA frontend — Vue 3 + TypeScript + Vite + Tailwind 4 + ECharts",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
