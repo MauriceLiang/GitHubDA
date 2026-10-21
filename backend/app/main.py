@@ -96,7 +96,7 @@ def healthz():
 app.include_router(v1_router)
 app.include_router(browser_router)
 
-WEB_DIST = Path(__file__).resolve().parents[2] / "githubda-ui-prototype" / "dist"
+WEB_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 WEB_INDEX = WEB_DIST / "index.html"
 if WEB_INDEX.is_file():
     assets_dir = WEB_DIST / "assets"
@@ -118,7 +118,7 @@ if WEB_INDEX.is_file():
 else:
     @app.get("/", include_in_schema=False)
     def web_not_built():
-        return {"status": "ok", "ui": "Vue assets are not built", "command": "cd githubda-ui-prototype && npm ci && npm run build"}
+        return {"status": "ok", "ui": "Vue assets are not built", "command": "cd frontend && npm ci && npm run build"}
 
 
 def custom_openapi():

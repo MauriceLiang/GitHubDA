@@ -22,15 +22,15 @@ uv run --locked --all-extras python -m scripts.start
 
 ## 前端开发
 
-主界面源码位于 `githubda-ui-prototype/`。Mock 模式不需要启动后端：
+主界面源码位于 `frontend/`。Mock 模式不需要启动后端：
 
 ```bash
-cd githubda-ui-prototype
+cd frontend
 npm ci
 VITE_DATA_MODE=mock npm run dev
 ```
 
-若要从 Vite 开发服务器联调真实 API，先用一键启动命令启动本地服务，再在 `githubda-ui-prototype` 目录执行 `VITE_DATA_MODE=http npm run dev`。开发服务器会把安全浏览器 API 请求转发到本机 FastAPI。
+若要从 Vite 开发服务器联调真实 API，先用一键启动命令启动本地服务，再在 `frontend` 目录执行 `VITE_DATA_MODE=http npm run dev`。开发服务器会把安全浏览器 API 请求转发到本机 FastAPI。
 
 后端配置与 API 说明见 [README_backend.md](README_backend.md)。
 

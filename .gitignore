@@ -10,7 +10,7 @@ docs/*
 docs/ux/*
 !docs/ux/v22-progress.md
 .idea
-githubda-ui-prototype/node_modules/
-githubda-ui-prototype/dist/
+frontend/node_modules/
+frontend/dist/
 !docs/insights/
 docs
