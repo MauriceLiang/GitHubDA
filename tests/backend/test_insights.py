@@ -1,6 +1,7 @@
 import gzip
 import json
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
@@ -108,6 +109,187 @@ def test_import_replay_idempotency_versions_api_and_csv(backend_client):
     assert client.get("/api/v1/repositories/123/insights/quality", headers=HEADERS).status_code == 200
     exported = client.get("/api/v1/repositories/123/insights/export.csv", headers=HEADERS)
     assert exported.status_code == 200 and "insights-v1" in exported.text and "window_start" in exported.text
+
+
+def test_closed_issue_records_search_pagination_and_safe_csv(backend_client, monkeypatch, tmp_path):
+    from backend.app.pipeline.raw_archive import archive_json
+
+    client, factory, fake_github = backend_client
+    client.post("/api/v1/library/repositories", json={"full_name": "example/project", "auto_analyze": False}, headers=HEADERS)
+    raw = fixture()
+    for index, item in enumerate(raw["issues"]):
+        item["number"] = 100 + index
+        item["title"] = f"Bug item {index}" if index < 4 else "=1+1"
+        item["body"] = "private body must not be exposed"
+        item["comments"] = 2 if index == 3 else 0
+    raw["issues"].append({"id": 9001, "number": 999, "title": "Pull request masquerading as Issue", "pull_request": {"url": "hidden"}, "created_at": iso_z(START), "closed_at": iso_z(START + timedelta(days=1))})
+    root = tmp_path / "raw"
+    root.mkdir()
+    monkeypatch.setattr("backend.app.pipeline.raw_archive.get_settings", lambda: type("Settings", (), {"raw_data_path": root})())
+    archive_path = archive_json(123, "source-task", "activity", {"issues": [json.dumps(raw["issues"])]})
+    sources = {key: {"coverage": "complete", "collected_at": iso_z(END)} for key in raw}
+    with factory() as session:
+        persist_insights(session, 123, "source-task", raw, sources, START, END, [archive_path])
+        session.commit()
+
+    response = client.get("/api/v1/repositories/123/issues?page=1&per_page=2&search=BUG", headers=HEADERS)
+    assert response.status_code == 200, response.text
+    page = response.json()
+    assert page["meta"]["pagination"] == {"page": 1, "per_page": 2, "total": 4, "has_next": True}
+    assert page["data"]["available"] is True
+    assert page["data"]["coverage"]["state"] == "complete"
+    assert [item["number"] for item in page["data"]["items"]] == [103, 102]
+    assert page["data"]["items"][0]["url"] == "https://github.com/example/project/issues/103"
+    assert "body" not in page["data"]["items"][0]
+    second = client.get("/api/v1/repositories/123/issues?page=2&per_page=2&search=bug", headers=HEADERS).json()["data"]
+    assert [item["number"] for item in second["items"]] == [101, 100]
+
+    detail_response = client.get("/api/v1/repositories/123/issues/103", headers=HEADERS)
+    assert detail_response.status_code == 200, detail_response.text
+    detail = detail_response.json()["data"]
+    assert detail["title"] == "Bug item 3"
+    assert detail["body"] == "private body must not be exposed"
+    assert detail["comments_count"] == 2
+    assert client.get("/api/v1/repositories/123/issues/999", headers=HEADERS).status_code == 404
+
+    issue_requests = []
+    comment_requests = []
+    fake_github.get_issue_detail = lambda full_name, number: (
+        issue_requests.append((full_name, number)) or {
+            "number": number,
+            "title": "Current GitHub title",
+            "body": "## Online issue body",
+            "state": "closed",
+            "user": {"login": "issue-author"},
+            "labels": [{"name": "bug"}],
+            "created_at": iso_z(START),
+            "closed_at": iso_z(START + timedelta(hours=4)),
+            "updated_at": iso_z(START + timedelta(hours=5)),
+            "html_url": "https://github.com/example/project/issues/103",
+            "comments": 2,
+        }
+    )
+    fake_github.list_issue_comments_detailed = lambda full_name, number: (
+        comment_requests.append((full_name, number)) or SimpleNamespace(
+            items=[{"user": {"login": "maintainer"}, "body": "Fixed in latest release.", "created_at": iso_z(START + timedelta(hours=6))}],
+            error_code=None,
+            has_next=False,
+        )
+    )
+    online = client.get("/api/v1/repositories/123/issues/103/online", headers=HEADERS)
+    assert online.status_code == 200, online.text
+    online_data = online.json()["data"]
+    assert online_data["title"] == "Current GitHub title"
+    assert online_data["body"] == "## Online issue body"
+    assert online_data["author"] == "issue-author"
+    assert online_data["labels"] == ["bug"]
+    assert online_data["comments_count"] == 2
+    assert online_data["comments"][0]["body"] == "Fixed in latest release."
+    assert online_data["comments_complete"] is True
+    assert online_data["comments_error"] is None
+    assert issue_requests == [("example/project", 103)]
+    assert comment_requests == [("example/project", 103)]
+
+    exported = client.get("/api/v1/repositories/123/issues/export.csv", headers=HEADERS)
+    assert exported.status_code == 200 and "issue_number,title,created_at" in exported.text
+    assert "private body" not in exported.text
+    assert "'=1+1" in exported.text
+
+
+def test_pull_request_records_include_unmerged_details_and_fetch_online_only_on_request(backend_client, monkeypatch, tmp_path):
+    from backend.app.pipeline.raw_archive import archive_json
+
+    client, factory, fake_github = backend_client
+    client.post("/api/v1/library/repositories", json={"full_name": "example/project", "auto_analyze": False}, headers=HEADERS)
+    pulls = [
+        {
+            "id": 501, "number": 30, "title": "feat: add search", "body": "Local merged description",
+            "created_at": iso_z(START + timedelta(days=1)), "closed_at": iso_z(START + timedelta(days=3)),
+            "merged_at": iso_z(START + timedelta(days=3)), "comments": 0, "draft": False,
+        },
+        {
+            "id": 502, "number": 31, "title": "=1+1", "body": "Local closed description",
+            "created_at": iso_z(START + timedelta(days=1)), "closed_at": iso_z(START + timedelta(days=6)),
+            "merged_at": None, "comments": 1, "draft": True,
+        },
+        {
+            "id": 503, "number": 32, "title": "outside collection window", "body": "",
+            "created_at": iso_z(START + timedelta(days=1)), "closed_at": iso_z(END + timedelta(hours=1)),
+            "merged_at": None, "comments": 0, "draft": False,
+        },
+    ]
+    root = tmp_path / "raw"
+    root.mkdir()
+    monkeypatch.setattr("backend.app.pipeline.raw_archive.get_settings", lambda: type("Settings", (), {"raw_data_path": root})())
+    archive_path = archive_json(123, "pull-detail-task", "activity", {"pulls": [json.dumps(pulls)]})
+    raw = {"commits": [], "issues": [], "pulls": pulls, "releases": []}
+    sources = {key: {"coverage": "complete", "collected_at": iso_z(END)} for key in raw}
+    with factory() as session:
+        persist_insights(session, 123, "pull-detail-task", raw, sources, START, END, [archive_path])
+        session.commit()
+
+    list_response = client.get("/api/v1/repositories/123/pull-requests?page=1&per_page=1", headers=HEADERS)
+    assert list_response.status_code == 200, list_response.text
+    page = list_response.json()["data"]
+    assert page["available"] is True
+    assert page["coverage"]["state"] == "complete"
+    assert page["total"] == 2
+    assert page["items"][0]["number"] == 31
+    assert page["items"][0]["state"] == "closed"
+    assert page["items"][0]["draft"] is True
+    assert client.get("/api/v1/repositories/123/pull-requests?search=ADD%20SEARCH", headers=HEADERS).json()["data"]["items"][0]["number"] == 30
+    merged = client.get("/api/v1/repositories/123/pull-requests/30", headers=HEADERS)
+    assert merged.status_code == 200, merged.text
+    assert merged.json()["data"]["body"] == "Local merged description"
+    assert merged.json()["data"]["duration_days"] == 2.0
+    closed = client.get("/api/v1/repositories/123/pull-requests/31", headers=HEADERS)
+    assert closed.json()["data"]["state"] == "closed"
+    assert closed.json()["data"]["merged_at"] is None
+    assert client.get("/api/v1/repositories/123/pull-requests/999", headers=HEADERS).status_code == 404
+
+    pull_requests = []
+    comments_requests = []
+    fake_github.get_pull_request_detail = lambda full_name, number: (
+        pull_requests.append((full_name, number)) or {
+            "number": number, "title": "Latest GitHub title", "body": "## Online PR body", "state": "closed",
+            "merged_at": None, "user": {"login": "pr-author"}, "labels": [{"name": "bug"}],
+            "created_at": iso_z(START), "closed_at": iso_z(START + timedelta(days=6)),
+            "updated_at": iso_z(START + timedelta(days=7)), "html_url": "https://github.com/example/project/pull/31", "comments": 1,
+        }
+    )
+    fake_github.list_pull_request_comments_detailed = lambda full_name, number: (
+        comments_requests.append((full_name, number)) or SimpleNamespace(
+            items=[{"user": {"login": "reviewer"}, "body": "Please add a regression case.", "created_at": iso_z(START + timedelta(days=4))}],
+            error_code=None,
+            has_next=False,
+        )
+    )
+    assert pull_requests == comments_requests == []
+    online = client.get("/api/v1/repositories/123/pull-requests/31/online", headers=HEADERS)
+    assert online.status_code == 200, online.text
+    online_data = online.json()["data"]
+    assert online_data["title"] == "Latest GitHub title"
+    assert online_data["state"] == "closed"
+    assert online_data["author"] == "pr-author"
+    assert online_data["labels"] == ["bug"]
+    assert online_data["comments"][0]["body"] == "Please add a regression case."
+    assert online_data["comments_complete"] is True
+    assert pull_requests == [("example/project", 31)]
+    assert comments_requests == [("example/project", 31)]
+
+    exported = client.get("/api/v1/repositories/123/pull-requests/export.csv", headers=HEADERS)
+    assert exported.status_code == 200 and "pull_number,title,state" in exported.text
+    assert "'=1+1" in exported.text
+
+
+def test_unknown_api_route_does_not_fall_through_to_spa(backend_client):
+    client, _, _ = backend_client
+
+    response = client.get("/api/v1/route-that-does-not-exist", headers=HEADERS)
+
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
 
 def test_archive_safety(tmp_path, monkeypatch):
@@ -262,3 +444,60 @@ def test_research_chart_fixture_is_derived_from_fixed_events():
     assert len(expected['rows']) == 24
     assert expected['summary']['issue_median_hours']['count'] == 5
     assert expected['summary']['issue_median_hours']['missing_count'] == 19
+
+
+def test_commit_activity_archive_search_pagination_week_and_author_privacy(backend_client, monkeypatch, tmp_path):
+    from backend.app.pipeline.raw_archive import archive_json
+
+    client, factory, _ = backend_client
+    client.post('/api/v1/library/repositories', json={'full_name': 'example/project', 'auto_analyze': False}, headers=HEADERS)
+    raw = fixture()
+    raw['commits'] = [
+        {
+            'sha': f'{i:040x}',
+            'commit': {
+                'committer': {'date': iso_z(START + timedelta(days=day, hours=hour))},
+                'author': {'name': author_name, 'email': f'{author_name.lower()}@private.test'},
+                'message': message,
+            },
+            'author': author,
+        }
+        for i, day, hour, author_name, message, author in [
+            (1001, 0, 3, 'Alice Dev', 'fix: handle missing state\nDetails stay private', {'id': 1, 'login': 'alice', 'type': 'User'}),
+            (1002, 0, 9, 'Automation', 'chore: refresh generated files', {'id': 2, 'login': 'sync[bot]', 'type': 'Bot'}),
+            (1003, 8, 11, 'Unlinked Name', 'docs: explain setup', None),
+        ]
+    ]
+    root = tmp_path / 'raw'
+    root.mkdir()
+    monkeypatch.setattr('backend.app.pipeline.raw_archive.get_settings', lambda: type('Settings', (), {'raw_data_path': root})())
+    archive_path = archive_json(123, 'commit-detail-task', 'activity', {'commits': [json.dumps(raw['commits'])]})
+    sources = {key: {'coverage': 'partial' if key == 'commits' else 'complete'} for key in raw}
+    with factory() as session:
+        persist_insights(session, 123, 'commit-detail-task', raw, sources, START, END, [archive_path])
+        session.commit()
+
+    response = client.get('/api/v1/repositories/123/commits?page=1&per_page=2', headers=HEADERS)
+    assert response.status_code == 200, response.text
+    page = response.json()['data']
+    assert page['available'] is True
+    assert page['coverage']['state'] == 'partial'
+    assert page['commit_count'] == 3 and page['author_count'] == 3
+    assert page['total'] == 3 and len(page['items']) == 2
+    assert [item['sha'] for item in page['items']] == [f'{1003:040x}', f'{1002:040x}']
+    assert page['daily_counts'] == [
+        {'date': '2026-08-17', 'count': 2},
+        {'date': '2026-08-25', 'count': 1},
+    ]
+    authors = {item['author']: item for item in page['authors']}
+    assert authors['sync[bot]']['is_bot'] is True
+    assert authors['Unlinked Name']['anonymous'] is True
+    assert 'alice.dev@private.test' not in response.text
+
+    second_page = client.get('/api/v1/repositories/123/commits?page=2&per_page=2', headers=HEADERS).json()['data']
+    assert [item['author'] for item in second_page['items']] == ['alice']
+    searched = client.get('/api/v1/repositories/123/commits?search=missing', headers=HEADERS).json()['data']
+    assert searched['total'] == 1 and searched['items'][0]['author'] == 'alice'
+    selected_week = client.get('/api/v1/repositories/123/commits?week_start=2026-08-17', headers=HEADERS).json()['data']
+    assert selected_week['commit_count'] == 2
+    assert {item['sha'] for item in selected_week['items']} == {f'{1001:040x}', f'{1002:040x}'}

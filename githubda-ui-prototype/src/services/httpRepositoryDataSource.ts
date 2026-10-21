@@ -1,6 +1,6 @@
 import type {
-  CollectionSettings, ComparisonBundle, ComparisonEntry, Coverage, Granularity, HistogramResult, ReleaseDetails, ReleaseRecord,
-  Metric, Observation, RepositoryAnalysis, RepositoryStatus, RepositorySummary,
+  CollectionSettings, CommitActivityPage, CommitEvent, ComparisonBundle, ComparisonEntry, Coverage, Granularity, HistogramResult, ReleaseDetails, ReleaseRecord,
+  IssueOnlineDetail, IssueRecordDetail, IssueRecordPage, Metric, Observation, PullRequestActivityDetail, PullRequestActivityPage, PullRequestOnlineDetail, RepositoryAnalysis, RepositoryStatus, RepositorySummary,
   ResearchDataset, ResearchGroup, ResearchScatterPoint, TaskItem, TaskStatus, TimePoint, TimeWindow,
 } from './types'
 import type { RepositoryDataSource } from './repositoryDataSource'
@@ -10,6 +10,11 @@ interface ApiError { error?: { code?: string; message?: string }; request_id?: s
 
 let csrfToken: string | null = null
 let sessionRequest: Promise<void> | null = null
+
+function isJsonResponse(response: Response): boolean {
+  const mediaType = response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase()
+  return mediaType === 'application/json' || Boolean(mediaType?.endsWith('+json'))
+}
 
 async function openSession() {
   if (!sessionRequest) {
@@ -34,6 +39,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
 
   const response = await fetch(`/api/browser/v1${path}`, { ...init, headers, credentials: 'same-origin' })
+  if (response.status !== 204 && !isJsonResponse(response)) {
+    throw new Error('后端返回了网页而不是 API 数据，可能仍在运行旧版本；请重启后端后重试')
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as ApiError
     const message = body.error?.message ?? `请求失败（${response.status}）`
@@ -378,6 +386,187 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
     }
   }
 
+  async getIssueRecords(id: string, page: number, perPage: number, search: string): Promise<IssueRecordPage> {
+    const params = new URLSearchParams({ page: String(page), per_page: String(perPage) })
+    if (search.trim()) params.set('search', search.trim())
+    const result = await data<Record<string, any>>(`/repositories/${repositoryId(id)}/issues?${params}`)
+    const rawCoverage = object(result.coverage)
+    const state = rawCoverage.state === 'complete' || rawCoverage.state === 'partial' ? rawCoverage.state : 'missing'
+    return {
+      items: array(result.items).map((item) => ({
+        number: numberOrNull(item.number) ?? 0,
+        title: String(item.title ?? ''),
+        createdAt: textOrNull(item.created_at),
+        closedAt: String(item.closed_at ?? ''),
+        durationDays: numberOrNull(item.duration_days),
+        state: 'closed',
+        url: textOrNull(item.url) ?? undefined,
+      })),
+      page: numberOrNull(result.page) ?? page,
+      perPage: numberOrNull(result.per_page) ?? perPage,
+      total: numberOrNull(result.total) ?? 0,
+      available: result.available === true,
+      coverage: {
+        state,
+        label: String(rawCoverage.label ?? '覆盖未知'),
+        detail: textOrNull(rawCoverage.detail) ?? undefined,
+      },
+      note: String(result.note ?? ''),
+      windowStart: textOrNull(result.window_start),
+      windowEnd: textOrNull(result.window_end),
+    }
+  }
+
+  async getCommitActivity(id: string, page: number, perPage: number, search: string, weekStart?: string): Promise<CommitActivityPage> {
+    const params = new URLSearchParams({ page: String(page), per_page: String(perPage) })
+    if (search.trim()) params.set('search', search.trim())
+    if (weekStart) params.set('week_start', weekStart)
+    const result = await data<Record<string, any>>(`/repositories/${repositoryId(id)}/commits?${params}`)
+    const rawCoverage = object(result.coverage)
+    const state = rawCoverage.state === 'complete' || rawCoverage.state === 'partial' ? rawCoverage.state : 'missing'
+    const items: CommitEvent[] = array(result.items).map((item) => ({
+      sha: String(item.sha ?? ''),
+      title: String(item.title ?? ''),
+      author: String(item.author ?? '匿名作者'),
+      isBot: item.is_bot === true,
+      anonymous: item.anonymous === true,
+      date: String(item.date ?? ''),
+      url: textOrNull(item.url) ?? undefined,
+    }))
+    return {
+      items,
+      page: numberOrNull(result.page) ?? page,
+      perPage: numberOrNull(result.per_page) ?? perPage,
+      total: numberOrNull(result.total) ?? 0,
+      available: result.available === true,
+      coverage: { state, label: String(rawCoverage.label ?? '覆盖未知'), detail: textOrNull(rawCoverage.detail) ?? undefined },
+      note: String(result.note ?? ''),
+      windowStart: textOrNull(result.window_start),
+      windowEnd: textOrNull(result.window_end),
+      commitCount: numberOrNull(result.commit_count) ?? 0,
+      authorCount: numberOrNull(result.author_count) ?? 0,
+      dailyCounts: array(result.daily_counts).map((item) => ({ date: String(item.date ?? ''), count: numberOrNull(item.count) ?? 0 })),
+      authors: array(result.authors).map((item) => ({
+        author: String(item.author ?? '匿名作者'),
+        commits: numberOrNull(item.commits) ?? 0,
+        isBot: item.is_bot === true,
+        anonymous: item.anonymous === true,
+      })),
+    }
+  }
+
+  async getIssueDetail(id: string, issueNumber: number): Promise<IssueRecordDetail> {
+    const item = await data<Record<string, unknown>>(`/repositories/${repositoryId(id)}/issues/${issueNumber}`)
+    return {
+      number: numberOrNull(item.number) ?? issueNumber,
+      title: String(item.title ?? ''),
+      createdAt: textOrNull(item.created_at),
+      closedAt: String(item.closed_at ?? ''),
+      durationDays: numberOrNull(item.duration_days),
+      state: 'closed',
+      url: textOrNull(item.url) ?? undefined,
+      body: textOrNull(item.body),
+      commentsCount: numberOrNull(item.comments_count) ?? 0,
+    }
+  }
+
+  async getIssueOnlineDetail(id: string, issueNumber: number): Promise<IssueOnlineDetail> {
+    const result = await data<Record<string, any>>(`/repositories/${repositoryId(id)}/issues/${issueNumber}/online`)
+    return {
+      number: numberOrNull(result.number) ?? issueNumber,
+      title: String(result.title ?? ''),
+      body: textOrNull(result.body),
+      state: result.state === 'open' ? 'open' : 'closed',
+      author: textOrNull(result.author),
+      labels: Array.isArray(result.labels) ? result.labels.filter((label): label is string => typeof label === 'string') : [],
+      createdAt: textOrNull(result.created_at),
+      closedAt: textOrNull(result.closed_at),
+      updatedAt: textOrNull(result.updated_at),
+      source: 'github',
+      url: textOrNull(result.url) ?? undefined,
+      commentsCount: numberOrNull(result.comments_count) ?? 0,
+      comments: array(result.comments).map((item) => ({
+        author: String(item.author ?? '已删除用户'),
+        body: String(item.body ?? ''),
+        createdAt: textOrNull(item.created_at),
+      })),
+      commentsComplete: result.comments_complete === true,
+      commentsError: textOrNull(result.comments_error),
+    }
+  }
+
+  async getPullRequestRecords(id: string, page: number, perPage: number, search: string): Promise<PullRequestActivityPage> {
+    const params = new URLSearchParams({ page: String(page), per_page: String(perPage) })
+    if (search.trim()) params.set('search', search.trim())
+    const result = await data<Record<string, any>>(`/repositories/${repositoryId(id)}/pull-requests?${params}`)
+    const rawCoverage = object(result.coverage)
+    const state = rawCoverage.state === 'complete' || rawCoverage.state === 'partial' ? rawCoverage.state : 'missing'
+    return {
+      items: array(result.items).map((item) => ({
+        number: numberOrNull(item.number) ?? 0,
+        title: String(item.title ?? ''),
+        createdAt: textOrNull(item.created_at),
+        closedAt: textOrNull(item.closed_at),
+        mergedAt: textOrNull(item.merged_at),
+        durationDays: numberOrNull(item.duration_days),
+        state: item.state === 'merged' ? 'merged' : 'closed',
+        draft: item.draft === true,
+        commentsCount: numberOrNull(item.comments_count) ?? 0,
+        url: textOrNull(item.url) ?? undefined,
+      })),
+      page: numberOrNull(result.page) ?? page,
+      perPage: numberOrNull(result.per_page) ?? perPage,
+      total: numberOrNull(result.total) ?? 0,
+      available: result.available === true,
+      coverage: { state, label: String(rawCoverage.label ?? '覆盖未知'), detail: textOrNull(rawCoverage.detail) ?? undefined },
+      note: String(result.note ?? ''),
+      windowStart: textOrNull(result.window_start),
+      windowEnd: textOrNull(result.window_end),
+    }
+  }
+
+  async getPullRequestDetail(id: string, pullNumber: number): Promise<PullRequestActivityDetail> {
+    const item = await data<Record<string, unknown>>(`/repositories/${repositoryId(id)}/pull-requests/${pullNumber}`)
+    return {
+      number: numberOrNull(item.number) ?? pullNumber,
+      title: String(item.title ?? ''),
+      createdAt: textOrNull(item.created_at),
+      closedAt: textOrNull(item.closed_at),
+      mergedAt: textOrNull(item.merged_at),
+      durationDays: numberOrNull(item.duration_days),
+      state: item.state === 'merged' ? 'merged' : 'closed',
+      draft: item.draft === true,
+      commentsCount: numberOrNull(item.comments_count) ?? 0,
+      url: textOrNull(item.url) ?? undefined,
+      body: textOrNull(item.body),
+    }
+  }
+
+  async getPullRequestOnlineDetail(id: string, pullNumber: number): Promise<PullRequestOnlineDetail> {
+    const result = await data<Record<string, any>>(`/repositories/${repositoryId(id)}/pull-requests/${pullNumber}/online`)
+    return {
+      number: numberOrNull(result.number) ?? pullNumber,
+      title: String(result.title ?? ''),
+      body: textOrNull(result.body),
+      state: result.state === 'open' || result.state === 'merged' ? result.state : 'closed',
+      author: textOrNull(result.author),
+      labels: Array.isArray(result.labels) ? result.labels.filter((label): label is string => typeof label === 'string') : [],
+      createdAt: textOrNull(result.created_at),
+      closedAt: textOrNull(result.closed_at),
+      mergedAt: textOrNull(result.merged_at),
+      updatedAt: textOrNull(result.updated_at),
+      url: textOrNull(result.url) ?? undefined,
+      commentsCount: numberOrNull(result.comments_count) ?? 0,
+      comments: array(result.comments).map((item) => ({
+        author: String(item.author ?? '已删除用户'),
+        body: String(item.body ?? ''),
+        createdAt: textOrNull(item.created_at),
+      })),
+      commentsComplete: result.comments_complete === true,
+      commentsError: textOrNull(result.comments_error),
+    }
+  }
+
   async getReleaseDetails(repositoryIdValue: string, releaseId: string): Promise<ReleaseDetails> {
     const detail = await data<Record<string, unknown>>(`/repositories/${repositoryId(repositoryIdValue)}/releases/${encodeURIComponent(releaseId)}`)
     return {
@@ -523,6 +712,20 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
 
   exportInsights(id: string): Promise<Blob> {
     return csv(`/repositories/${repositoryId(id)}/insights/export.csv`)
+  }
+
+  exportIssueRecords(id: string, search: string): Promise<Blob> {
+    const params = new URLSearchParams()
+    if (search.trim()) params.set('search', search.trim())
+    const query = params.size ? `?${params}` : ''
+    return csv(`/repositories/${repositoryId(id)}/issues/export.csv${query}`)
+  }
+
+  exportPullRequestRecords(id: string, search: string): Promise<Blob> {
+    const params = new URLSearchParams()
+    if (search.trim()) params.set('search', search.trim())
+    const query = params.size ? `?${params}` : ''
+    return csv(`/repositories/${repositoryId(id)}/pull-requests/export.csv${query}`)
   }
 
   exportComparison(ids: string[]): Promise<Blob> {

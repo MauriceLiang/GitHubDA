@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowRight, Plus, Search } from 'lucide-vue-next'
+import { ArrowRight, Search } from 'lucide-vue-next'
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import GdBadge from '@/components/ui/GdBadge.vue'
@@ -109,7 +109,6 @@ async function remove(repo: RepositorySummary) {
         <h1 class="m-0 text-[24px] font-semibold">仓库</h1>
         <p class="mt-1.5 text-muted">我的分析库与公开仓库发现</p>
       </div>
-      <GdButton @click="tab = 'search'"><Plus :size="14" /> 发现并添加仓库</GdButton>
     </div>
 
     <div class="flex gap-[22px] border-b border-line text-[13px]">

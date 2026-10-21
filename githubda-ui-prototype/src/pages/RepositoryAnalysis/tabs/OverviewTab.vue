@@ -28,7 +28,9 @@ const medianInterval = computed(() => {
 
 function selectCommit(dataIndex: number) {
   const point = commitsPoints.value[dataIndex]
-  if (point && point.value !== null) emit('select-week', { date: point.date, count: point.value })
+  if (point && (point.value !== null || point.observedValue !== null && point.observedValue !== undefined)) {
+    emit('select-week', { date: point.date, count: point.value ?? point.observedValue ?? 0 })
+  }
 }
 
 function repositorySizeLabel(sizeKb: number | null | undefined) {
@@ -56,7 +58,7 @@ function repositorySizeLabel(sizeKb: number | null | undefined) {
     <TrendChart :points="commitsPoints" :unit="analysis.commits.unit" :height="260" @select="(p) => selectCommit(p.dataIndex)" />
     <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted">
       <span>单位：{{ analysis.commits.unit }} · 提交 SHA 去重 · 时区 UTC · 有效样本 {{ analysis.commits.sampleSize?.toLocaleString('en-US') ?? '—' }}</span>
-      <span>点击柱查看该周聚合；逐条 Commit 明细暂未提供</span>
+      <span>点击柱查看该周已采集的 Commit 明细</span>
     </div>
   </GdCard>
 

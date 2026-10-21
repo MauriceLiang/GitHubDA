@@ -108,7 +108,9 @@ if WEB_INDEX.is_file():
         return FileResponse(WEB_INDEX, headers={"Cache-Control": "no-cache"})
 
     @app.get("/{path:path}", include_in_schema=False)
-    def web_route(path: str):
+    def web_route(path: str, request: Request):
+        if path == "api" or path.startswith("api/"):
+            return _error(request, 404, "RESOURCE_NOT_FOUND", "请求的 API 资源不存在")
         candidate = (WEB_DIST / path).resolve()
         if candidate.is_relative_to(WEB_DIST.resolve()) and candidate.is_file():
             return FileResponse(candidate)

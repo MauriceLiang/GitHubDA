@@ -72,6 +72,157 @@ class ReleaseDetail(BaseModel):
     body: str | None
 
 
+class DetailCoverage(BaseModel):
+    state: Literal["complete", "partial", "missing"]
+    label: str
+    detail: str | None
+
+
+class IssueCoverage(DetailCoverage):
+    pass
+
+
+class ClosedIssueRecord(BaseModel):
+    number: int
+    title: str
+    created_at: str | None
+    closed_at: str
+    duration_days: float | None
+    state: Literal["closed"]
+    url: str
+
+
+class ClosedIssueDetail(ClosedIssueRecord):
+    body: str | None
+    comments_count: int = Field(ge=0)
+
+
+class IssueComment(BaseModel):
+    author: str
+    body: str
+    created_at: str | None
+
+
+class OnlineIssueDetail(BaseModel):
+    number: int
+    title: str
+    body: str | None
+    state: Literal["open", "closed"]
+    author: str | None
+    labels: list[str]
+    created_at: str | None
+    closed_at: str | None
+    updated_at: str | None
+    url: str
+    comments_count: int = Field(ge=0)
+    comments: list[IssueComment]
+    comments_complete: bool
+    comments_error: str | None
+
+
+class PullRequestRecord(BaseModel):
+    number: int
+    title: str
+    created_at: str | None
+    closed_at: str | None
+    merged_at: str | None
+    duration_days: float | None
+    state: Literal["closed", "merged"]
+    draft: bool
+    comments_count: int = Field(ge=0)
+    url: str
+
+
+class PullRequestDetail(PullRequestRecord):
+    body: str | None
+
+
+class PullRequestComment(BaseModel):
+    author: str
+    body: str
+    created_at: str | None
+
+
+class OnlinePullRequestDetail(BaseModel):
+    number: int
+    title: str
+    body: str | None
+    state: Literal["open", "closed", "merged"]
+    author: str | None
+    labels: list[str]
+    created_at: str | None
+    closed_at: str | None
+    merged_at: str | None
+    updated_at: str | None
+    url: str
+    comments_count: int = Field(ge=0)
+    comments: list[PullRequestComment]
+    comments_complete: bool
+    comments_error: str | None
+
+
+class PullRequestPage(BaseModel):
+    available: bool
+    coverage: DetailCoverage
+    note: str
+    window_start: str | None
+    window_end: str | None
+    items: list[PullRequestRecord]
+    page: int = Field(ge=1)
+    per_page: int = Field(ge=1, le=100)
+    total: int = Field(ge=0)
+
+
+class ClosedIssuePage(BaseModel):
+    available: bool
+    coverage: IssueCoverage
+    note: str
+    window_start: str | None
+    window_end: str | None
+    items: list[ClosedIssueRecord]
+    page: int
+    per_page: int
+    total: int
+
+
+class CommitDailyCount(BaseModel):
+    date: str
+    count: int = Field(ge=0)
+
+
+class CommitAuthorContribution(BaseModel):
+    author: str
+    commits: int = Field(ge=0)
+    is_bot: bool
+    anonymous: bool
+
+
+class CommitRecord(BaseModel):
+    sha: str
+    title: str
+    author: str
+    is_bot: bool
+    anonymous: bool
+    date: str
+    url: str
+
+
+class CommitActivityPage(BaseModel):
+    available: bool
+    coverage: DetailCoverage
+    note: str
+    window_start: str | None
+    window_end: str | None
+    commit_count: int = Field(ge=0)
+    author_count: int = Field(ge=0)
+    daily_counts: list[CommitDailyCount]
+    authors: list[CommitAuthorContribution]
+    items: list[CommitRecord]
+    page: int = Field(ge=1)
+    per_page: int = Field(ge=1, le=100)
+    total: int = Field(ge=0)
+
+
 class ReleaseMetric(InsightMetric):
     metric_key: Literal["release_intervals_days"]
     release_count: int

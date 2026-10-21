@@ -147,6 +147,60 @@ def test_detailed_pagination_reports_each_validated_page():
     assert [item.has_next for item in observations] == [True, True, False]
 
 
+def test_issue_comments_are_capped_at_one_page():
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        return httpx.Response(
+            200,
+            headers={"Link": f'<{GITHUB_API}/repos/a/b/issues/7/comments?page=2>; rel="next"'},
+            json=[{"id": 1, "body": "first page"}],
+        )
+
+    client = GitHubClient(httpx.Client(base_url=GITHUB_API, transport=httpx.MockTransport(respond)))
+    result = client.list_issue_comments_detailed("a/b", 7)
+
+    assert len(calls) == 1
+    assert calls[0].url.path == "/repos/a/b/issues/7/comments"
+    assert result.pages_fetched == 1
+    assert result.items == [{"id": 1, "body": "first page"}]
+    assert result.complete is False
+    assert result.has_next is True
+
+
+def test_pull_request_detail_and_discussion_comments_use_safe_bounded_requests():
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        if request.url.path.endswith("/pulls/7"):
+            return httpx.Response(200, json={"number": 7, "title": "Example PR", "state": "closed"})
+        return httpx.Response(
+            200,
+            headers={"Link": f'<{GITHUB_API}/repos/a/b/issues/7/comments?page=2>; rel="next"'},
+            json=[{"id": 1, "body": "first page"}],
+        )
+
+    client = GitHubClient(httpx.Client(base_url=GITHUB_API, transport=httpx.MockTransport(respond)))
+    detail = client.get_pull_request_detail("a/b", 7)
+    comments = client.list_pull_request_comments_detailed("a/b", 7)
+
+    assert detail["title"] == "Example PR"
+    assert [request.url.path for request in calls] == [
+        "/repos/a/b/pulls/7",
+        "/repos/a/b/issues/7/comments",
+    ]
+    assert calls[1].url.params["per_page"] == "100"
+    assert comments.items == [{"id": 1, "body": "first page"}]
+    assert comments.has_next is True
+    assert comments.pages_fetched == 1
+
+    with pytest.raises(AppError) as error:
+        client.get_pull_request_detail("a/b", 0)
+    assert error.value.code == "INVALID_PULL_REQUEST_NUMBER"
+
+
 def test_detailed_pagination_retains_successful_pages_before_timeout():
     calls = []
 
