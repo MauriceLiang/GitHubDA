@@ -109,18 +109,123 @@ export interface CommitEvent {
   title: string
   author: string
   isBot: boolean
+  anonymous?: boolean
   date: string
   url?: string
+}
+
+export interface CommitActivityPage {
+  items: CommitEvent[]
+  page: number
+  perPage: number
+  total: number
+  available: boolean
+  coverage: Coverage
+  note: string
+  windowStart: string | null
+  windowEnd: string | null
+  commitCount: number
+  authorCount: number
+  dailyCounts: { date: string; count: number }[]
+  authors: AuthorContribution[]
 }
 
 export interface IssueRecord {
   number: number
   title: string
-  createdAt: string
-  closedAt: string | null
+  createdAt: string | null
+  closedAt: string
   durationDays: number | null
-  state: 'open' | 'closed'
+  state: 'closed'
   url?: string
+}
+
+export interface IssueRecordDetail extends IssueRecord {
+  body: string | null
+  commentsCount: number
+}
+
+export interface IssueComment {
+  author: string
+  body: string
+  createdAt: string | null
+}
+
+export interface IssueOnlineDetail {
+  number: number
+  title: string
+  createdAt: string | null
+  closedAt: string | null
+  url?: string
+  body: string | null
+  state: 'open' | 'closed'
+  author: string | null
+  labels: string[]
+  updatedAt: string | null
+  source: 'github' | 'mock'
+  commentsCount: number
+  comments: IssueComment[]
+  commentsComplete: boolean
+  commentsError: string | null
+}
+
+export interface IssueRecordPage {
+  items: IssueRecord[]
+  page: number
+  perPage: number
+  total: number
+  available: boolean
+  coverage: Coverage
+  note: string
+  windowStart: string | null
+  windowEnd: string | null
+}
+
+export interface PullRequestActivityRecord {
+  number: number
+  title: string
+  createdAt: string | null
+  closedAt: string | null
+  mergedAt: string | null
+  durationDays: number | null
+  state: 'closed' | 'merged'
+  draft: boolean
+  commentsCount: number
+  url?: string
+}
+
+export interface PullRequestActivityDetail extends PullRequestActivityRecord {
+  body: string | null
+}
+
+export interface PullRequestOnlineDetail {
+  number: number
+  title: string
+  body: string | null
+  state: 'open' | 'closed' | 'merged'
+  author: string | null
+  labels: string[]
+  createdAt: string | null
+  closedAt: string | null
+  mergedAt: string | null
+  updatedAt: string | null
+  url?: string
+  commentsCount: number
+  comments: IssueComment[]
+  commentsComplete: boolean
+  commentsError: string | null
+}
+
+export interface PullRequestActivityPage {
+  items: PullRequestActivityRecord[]
+  page: number
+  perPage: number
+  total: number
+  available: boolean
+  coverage: Coverage
+  note: string
+  windowStart: string | null
+  windowEnd: string | null
 }
 
 export interface PullRequestRecord {

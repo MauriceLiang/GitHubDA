@@ -217,6 +217,37 @@ class GitHubClient:
         owner, repo = validate_full_name(full_name)
         return self.list_paginated_detailed(f"/repos/{owner}/{repo}/issues", {"state": state, "since": since}, on_page=on_page)
 
+    def get_issue_detail(self, full_name: str, issue_number: int) -> dict[str, Any]:
+        if type(issue_number) is not int or issue_number <= 0:
+            raise AppError(400, "INVALID_ISSUE_NUMBER", "Issue 编号无效")
+        owner, repo = validate_full_name(full_name)
+        payload = _json(self._request("GET", f"/repos/{owner}/{repo}/issues/{issue_number}"))
+        if not isinstance(payload, dict) or payload.get("number") != issue_number or "pull_request" in payload:
+            raise AppError(502, "GITHUB_UPSTREAM_ERROR", "GitHub 返回的 Issue 详情无效")
+        return payload
+
+    def list_issue_comments_detailed(self, full_name: str, issue_number: int) -> PaginatedResult:
+        if type(issue_number) is not int or issue_number <= 0:
+            raise AppError(400, "INVALID_ISSUE_NUMBER", "Issue 编号无效")
+        owner, repo = validate_full_name(full_name)
+        return self.list_paginated_detailed(f"/repos/{owner}/{repo}/issues/{issue_number}/comments", max_pages=1)
+
+    def get_pull_request_detail(self, full_name: str, pull_number: int) -> dict[str, Any]:
+        if type(pull_number) is not int or pull_number <= 0:
+            raise AppError(400, "INVALID_PULL_REQUEST_NUMBER", "Pull Request 编号无效")
+        owner, repo = validate_full_name(full_name)
+        payload = _json(self._request("GET", f"/repos/{owner}/{repo}/pulls/{pull_number}"))
+        if not isinstance(payload, dict) or payload.get("number") != pull_number:
+            raise AppError(502, "GITHUB_UPSTREAM_ERROR", "GitHub 返回的 Pull Request 详情无效")
+        return payload
+
+    def list_pull_request_comments_detailed(self, full_name: str, pull_number: int) -> PaginatedResult:
+        if type(pull_number) is not int or pull_number <= 0:
+            raise AppError(400, "INVALID_PULL_REQUEST_NUMBER", "Pull Request 编号无效")
+        owner, repo = validate_full_name(full_name)
+        # Pull Request conversation comments use GitHub's Issues comments endpoint.
+        return self.list_paginated_detailed(f"/repos/{owner}/{repo}/issues/{pull_number}/comments", max_pages=1)
+
     def list_pulls(self, full_name: str, state: str = "closed"):
         owner, repo = validate_full_name(full_name)
         return self.list_paginated(f"/repos/{owner}/{repo}/pulls", {"state": state, "sort": "updated", "direction": "desc"})

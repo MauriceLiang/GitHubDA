@@ -1,14 +1,17 @@
 import csv
 import io
+from datetime import date
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from sqlalchemy.orm import Session
 
-from backend.app.api.dependencies import get_session
-from backend.app.api.helpers import envelope
+from backend.app.api.dependencies import get_github_client, get_session
+from backend.app.api.helpers import envelope, pagination
+from backend.app.core.exceptions import AppError
 from backend.app.schemas.common import SuccessEnvelope
-from backend.app.schemas.insights import InsightQuality, InsightSeries, ReleaseDetail, RepositoryInsights
-from backend.app.services.insights import repository_insights, repository_release_detail
+from backend.app.schemas.insights import ClosedIssueDetail, ClosedIssuePage, CommitActivityPage, InsightQuality, InsightSeries, OnlineIssueDetail, OnlinePullRequestDetail, PullRequestDetail, PullRequestPage, ReleaseDetail, RepositoryInsights
+from backend.app.services.insights import repository_closed_issue_detail, repository_closed_issue_online_detail, repository_closed_issues, repository_commit_activity, repository_insights, repository_pull_request_detail, repository_pull_request_online_detail, repository_pull_requests, repository_release_detail
+from backend.app.integrations.github.client import GitHubClient
 
 router = APIRouter(prefix="/repositories", tags=["insights"])
 
@@ -21,6 +24,103 @@ def insights(repository_id: int, request: Request, session: Session = Depends(ge
 @router.get("/{repository_id}/releases/{release_id}", response_model=SuccessEnvelope[ReleaseDetail])
 def release_detail(repository_id: int, request: Request, release_id: int = Path(gt=0, lt=10**20), session: Session = Depends(get_session)):
     return envelope(request, repository_release_detail(session, repository_id, release_id))
+
+
+@router.get("/{repository_id}/commits", response_model=SuccessEnvelope[CommitActivityPage])
+def commit_activity(
+    repository_id: int,
+    request: Request,
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=20, ge=1, le=100),
+    search: str = Query(default="", max_length=100),
+    week_start: date | None = Query(default=None),
+    session: Session = Depends(get_session),
+):
+    result = repository_commit_activity(session, repository_id, page=page, per_page=per_page, search=search, week_start=week_start)
+    items = result["items"]
+    total = result["total"]
+    result.update({"items": items, "page": page, "per_page": per_page})
+    return envelope(request, result, pagination=pagination(page, per_page, total), search={"q": search} if search else None)
+
+
+@router.get("/{repository_id}/issues", response_model=SuccessEnvelope[ClosedIssuePage])
+def closed_issues(
+    repository_id: int,
+    request: Request,
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=20, ge=1, le=100),
+    search: str = Query(default="", max_length=100),
+    session: Session = Depends(get_session),
+):
+    result = repository_closed_issues(session, repository_id, search)
+    items = result["items"]
+    total = len(items)
+    result.update({"items": items[(page - 1) * per_page : page * per_page], "page": page, "per_page": per_page, "total": total})
+    return envelope(request, result, pagination=pagination(page, per_page, total), search={"q": search} if search else None)
+
+
+@router.get("/{repository_id}/issues/export.csv")
+def export_closed_issues(repository_id: int, search: str = Query(default="", max_length=100), session: Session = Depends(get_session)):
+    result = repository_closed_issues(session, repository_id, search)
+    if not result["available"]:
+        raise AppError(409, "ISSUE_ARCHIVE_UNAVAILABLE", result["note"])
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["issue_number", "title", "created_at", "closed_at", "duration_days", "url"])
+    for item in result["items"]:
+        row = [item["number"], item["title"], item["created_at"], item["closed_at"], item["duration_days"], item["url"]]
+        writer.writerow(["'" + value if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")) else value for value in row])
+    return Response("\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="githubda_issues_{repository_id}.csv"'})
+
+
+@router.get("/{repository_id}/issues/{issue_number}", response_model=SuccessEnvelope[ClosedIssueDetail])
+def closed_issue_detail(repository_id: int, request: Request, issue_number: int = Path(gt=0, lt=10**10), session: Session = Depends(get_session)):
+    return envelope(request, repository_closed_issue_detail(session, repository_id, issue_number))
+
+
+@router.get("/{repository_id}/issues/{issue_number}/online", response_model=SuccessEnvelope[OnlineIssueDetail])
+def online_issue_detail(repository_id: int, request: Request, issue_number: int = Path(gt=0, lt=10**10), session: Session = Depends(get_session), github: GitHubClient = Depends(get_github_client)):
+    return envelope(request, repository_closed_issue_online_detail(session, repository_id, issue_number, github))
+
+
+@router.get("/{repository_id}/pull-requests", response_model=SuccessEnvelope[PullRequestPage])
+def pull_requests(
+    repository_id: int,
+    request: Request,
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=20, ge=1, le=100),
+    search: str = Query(default="", max_length=100),
+    session: Session = Depends(get_session),
+):
+    result = repository_pull_requests(session, repository_id, search)
+    items = result["items"]
+    total = len(items)
+    result.update({"items": items[(page - 1) * per_page : page * per_page], "page": page, "per_page": per_page, "total": total})
+    return envelope(request, result, pagination=pagination(page, per_page, total), search={"q": search} if search else None)
+
+
+@router.get("/{repository_id}/pull-requests/export.csv")
+def export_pull_requests(repository_id: int, search: str = Query(default="", max_length=100), session: Session = Depends(get_session)):
+    result = repository_pull_requests(session, repository_id, search)
+    if not result["available"]:
+        raise AppError(409, "PULL_REQUEST_ARCHIVE_UNAVAILABLE", result["note"])
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["pull_number", "title", "state", "created_at", "closed_at", "merged_at", "merge_duration_days", "draft", "comments_count", "url"])
+    for item in result["items"]:
+        row = [item["number"], item["title"], item["state"], item["created_at"], item["closed_at"], item["merged_at"], item["duration_days"], item["draft"], item["comments_count"], item["url"]]
+        writer.writerow(["'" + value if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")) else value for value in row])
+    return Response("\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="githubda_pull_requests_{repository_id}.csv"'})
+
+
+@router.get("/{repository_id}/pull-requests/{pull_number}", response_model=SuccessEnvelope[PullRequestDetail])
+def pull_request_detail(repository_id: int, request: Request, pull_number: int = Path(gt=0, lt=10**10), session: Session = Depends(get_session)):
+    return envelope(request, repository_pull_request_detail(session, repository_id, pull_number))
+
+
+@router.get("/{repository_id}/pull-requests/{pull_number}/online", response_model=SuccessEnvelope[OnlinePullRequestDetail])
+def online_pull_request_detail(repository_id: int, request: Request, pull_number: int = Path(gt=0, lt=10**10), session: Session = Depends(get_session), github: GitHubClient = Depends(get_github_client)):
+    return envelope(request, repository_pull_request_online_detail(session, repository_id, pull_number, github))
 
 
 @router.get("/{repository_id}/insights/series", response_model=SuccessEnvelope[InsightSeries])

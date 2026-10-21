@@ -1,6 +1,6 @@
 import type {
-  AuthorContribution, CommitEvent, ComparisonBundle, ComparisonEntry, Granularity, HistogramResult,
-  IssueRecord, Metric, PullRequestRecord, ReleaseDetails, ReleaseRecord, RepositoryAnalysis, RepositorySummary,
+  AuthorContribution, CommitActivityPage, CommitEvent, ComparisonBundle, ComparisonEntry, Granularity, HistogramResult,
+  IssueOnlineDetail, IssueRecord, IssueRecordDetail, IssueRecordPage, Metric, PullRequestActivityDetail, PullRequestActivityRecord, PullRequestActivityPage, PullRequestOnlineDetail, PullRequestRecord, ReleaseDetails, ReleaseRecord, RepositoryAnalysis, RepositorySummary,
   ResearchDataset, TaskItem, TimePoint, TimeSeriesResult, TimeWindow,
 } from './types'
 import type { RepositoryDataSource } from './repositoryDataSource'
@@ -186,6 +186,28 @@ function summaryOf(seed: RepoSeed): RepositorySummary {
   }
 }
 
+function demoPullRequestRecords(seed: RepoSeed): PullRequestActivityDetail[] {
+  const rows: [number, string, string, string, PullRequestActivityRecord['state'], number, boolean][] = [
+    [299, 'docs: 补充指标定义', '2025-03-04', '2025-03-10', 'merged', 2, false],
+    [296, 'perf: 聚合查询缓存', '2025-03-08', '2025-03-13', 'merged', 5, false],
+    [293, 'fix: 处理分页边界条件', '2025-03-15', '2025-03-20', 'closed', 3, true],
+    [288, 'feat: 增加活动趋势筛选', '2025-03-18', '2025-03-19', 'merged', 1, false],
+  ]
+  return rows.map(([number, title, createdAt, terminalAt, state, commentsCount, draft]) => ({
+    number,
+    title,
+    createdAt: `${createdAt}T09:00:00Z`,
+    closedAt: `${terminalAt}T12:00:00Z`,
+    mergedAt: state === 'merged' ? `${terminalAt}T12:00:00Z` : null,
+    durationDays: state === 'merged' ? (new Date(`${terminalAt}T12:00:00Z`).getTime() - new Date(`${createdAt}T09:00:00Z`).getTime()) / DAY : null,
+    state,
+    draft,
+    commentsCount,
+    url: `https://github.com/${seed.fullName}/pull/${number}`,
+    body: `## 改动说明\n\n这是用于界面预览的示例 Pull Request。\n\n- 目的：${title}\n- 状态：${state === 'merged' ? '已合并' : '关闭未合并'}\n\n演示内容不代表真实 GitHub 数据。`,
+  }))
+}
+
 const sha = (n: number) => ((n * 2654435761) % 0xfffffff).toString(16).padStart(7, '0').slice(0, 7)
 const COMMIT_TITLES = ['feat: 周聚合改为事件日期', 'fix: 排除 PR 类型的 Issue', 'chore: 升级解析依赖', 'docs: 补充指标定义', 'refactor: 统一时间口径', 'test: 增加部分采集用例', 'perf: 聚合查询缓存']
 
@@ -281,6 +303,43 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
     }))
   }
 
+  async getCommitActivity(id: string, page: number, perPage: number, search: string, weekStart?: string): Promise<CommitActivityPage> {
+    const seed = repoSeed(id) ?? REPOSITORIES[0]
+    const available = seed.coverage.state !== 'missing'
+    const weeks = weekStart ? [weekStart] : buckets(seed, 90).map((bucket) => bucket.date)
+    const items = available ? (await Promise.all(weeks.map((week) => this.getWeekCommits(id, week)))).flat() : []
+    items.sort((a, b) => b.date.localeCompare(a.date) || b.sha.localeCompare(a.sha))
+    const normalizedSearch = search.trim().toLocaleLowerCase()
+    const filtered = items.filter((item) => !normalizedSearch || item.title.toLocaleLowerCase().includes(normalizedSearch) || item.author.toLocaleLowerCase().includes(normalizedSearch) || item.sha.toLocaleLowerCase().includes(normalizedSearch))
+    const daily = new Map<string, number>()
+    const authors = new Map<string, AuthorContribution>()
+    items.forEach((item) => {
+      const date = item.date.slice(0, 10)
+      daily.set(date, (daily.get(date) ?? 0) + 1)
+      const author = authors.get(item.author) ?? { author: item.author, commits: 0, isBot: item.isBot, anonymous: item.anonymous }
+      author.commits += 1
+      authors.set(item.author, author)
+    })
+    const window = weekStart
+      ? { start: weekStart, end: addDays(weekStart, 7) }
+      : windowRange(seed, 90)
+    return {
+      items: filtered.slice((page - 1) * perPage, page * perPage),
+      page,
+      perPage,
+      total: filtered.length,
+      available,
+      coverage: seed.coverage,
+      note: '演示模式：列表由示例数据生成，用于预览页面交互，不代表真实 GitHub 归档。',
+      windowStart: window.start,
+      windowEnd: window.end,
+      commitCount: items.length,
+      authorCount: authors.size,
+      dailyCounts: [...daily.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, count]) => ({ date, count })),
+      authors: [...authors.values()].sort((a, b) => b.commits - a.commits || a.author.localeCompare(b.author)).slice(0, 20),
+    }
+  }
+
   async getClosedIssues(id: string): Promise<IssueRecord[]> {
     const seed = repoSeed(id) ?? REPOSITORIES[0]
     const titles = ['时间窗口切换后主图未重绘', 'Issue 关闭耗时缺少 P90 标注', '分页截断时未提示部分数据', '作者身份解析失败导致重复计数', 'Release 时间轴按等距排列', '导出 CSV 缺少时区列']
@@ -294,6 +353,138 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
         url: `https://github.com/${seed.fullName}/issues/${482 - i}`,
       }
     })
+  }
+
+  async getIssueRecords(id: string, page: number, perPage: number, search: string): Promise<IssueRecordPage> {
+    const seed = repoSeed(id) ?? REPOSITORIES[0]
+    const available = seed.issueCoverage.state !== 'missing'
+    const query = search.trim().toLocaleLowerCase()
+    const records = available ? await this.getClosedIssues(id) : []
+    const filtered = query
+      ? records.filter((record) => String(record.number).includes(query) || record.title.toLocaleLowerCase().includes(query))
+      : records
+    const window = windowRange(seed, 90)
+    return {
+      items: filtered.slice((page - 1) * perPage, page * perPage),
+      page,
+      perPage,
+      total: filtered.length,
+      available,
+      coverage: seed.issueCoverage,
+      note: available ? '演示数据仅用于界面预览；真实仓库记录来自本次采集窗口。' : '当前示例没有可展示的 Issue 逐条数据。',
+      windowStart: window.start,
+      windowEnd: window.end,
+    }
+  }
+
+  async getIssueDetail(id: string, issueNumber: number): Promise<IssueRecordDetail> {
+    const issue = (await this.getClosedIssues(id)).find((record) => record.number === issueNumber)
+    if (!issue) throw new Error('未找到该示例 Issue')
+    return { ...issue, body: `## 问题说明\n\n这是用于界面预览的示例 Issue 描述。\n\n- 现象：${issue.title}\n- 状态：已关闭\n\n演示数据仅用于预览。`, commentsCount: 1 }
+  }
+
+  async getIssueOnlineDetail(id: string, issueNumber: number): Promise<IssueOnlineDetail> {
+    const issue = (await this.getClosedIssues(id)).find((record) => record.number === issueNumber)
+    if (!issue) throw new Error('未找到该示例 Issue')
+    return {
+      ...issue,
+      body: `## 问题说明\n\n这是用于界面预览的示例 Issue 描述。\n\n- 现象：${issue.title}\n- 状态：已关闭\n\n演示数据仅用于预览。`,
+      author: 'demo-user',
+      labels: ['bug', 'needs-info'],
+      updatedAt: issue.closedAt,
+      source: 'mock',
+      commentsCount: 1,
+      comments: [{ author: 'demo-bot', createdAt: '2025-03-25T08:00:00Z', body: '## 处理记录\n\n该问题已修复，请在最新版本中验证。此评论为界面预览示例。' }],
+      commentsComplete: true,
+      commentsError: null,
+    }
+  }
+
+  async exportIssueRecords(id: string, search: string): Promise<Blob> {
+    const seed = repoSeed(id) ?? REPOSITORIES[0]
+    if (seed.issueCoverage.state === 'missing') throw new Error('当前示例没有可导出的 Issue 逐条数据')
+    const query = search.trim().toLocaleLowerCase()
+    const records = (await this.getClosedIssues(id)).filter((record) => !query || String(record.number).includes(query) || record.title.toLocaleLowerCase().includes(query))
+    const cells = [
+      ['issue_number', 'title', 'created_at', 'closed_at', 'duration_days', 'url'],
+      ...records.map((record) => [record.number, record.title, record.createdAt, record.closedAt, record.durationDays, record.url ?? '']),
+    ]
+    const escape = (value: string | number | null) => {
+      const text = value === null ? '' : String(value)
+      const safe = /^[=+@\t\r-]/.test(text) ? `'${text}` : text
+      return `"${safe.replaceAll('"', '""')}"`
+    }
+    return new Blob(['\ufeff', cells.map((row) => row.map(escape).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' })
+  }
+
+  async getPullRequestRecords(id: string, page: number, perPage: number, search: string): Promise<PullRequestActivityPage> {
+    const seed = repoSeed(id) ?? REPOSITORIES[0]
+    const available = seed.coverage.state !== 'missing'
+    const query = search.trim().toLocaleLowerCase()
+    const filtered = (available ? demoPullRequestRecords(seed) : []).filter((record) =>
+      !query || String(record.number).includes(query) || record.title.toLocaleLowerCase().includes(query),
+    )
+    const window = windowRange(seed, 90)
+    return {
+      items: filtered.slice((page - 1) * perPage, page * perPage).map(({ body: _body, ...record }) => record),
+      page,
+      perPage,
+      total: filtered.length,
+      available,
+      coverage: seed.coverage,
+      note: available
+        ? '演示数据仅用于界面预览；列表模拟本次采集窗口中的已合并与关闭未合并 PR。'
+        : '当前示例没有可展示的 Pull Request 逐条数据。',
+      windowStart: window.start,
+      windowEnd: window.end,
+    }
+  }
+
+  async getPullRequestDetail(id: string, pullNumber: number): Promise<PullRequestActivityDetail> {
+    const seed = repoSeed(id) ?? REPOSITORIES[0]
+    const record = demoPullRequestRecords(seed).find((item) => item.number === pullNumber)
+    if (!record) throw new Error('未找到该示例 Pull Request')
+    return record
+  }
+
+  async getPullRequestOnlineDetail(id: string, pullNumber: number): Promise<PullRequestOnlineDetail> {
+    const record = await this.getPullRequestDetail(id, pullNumber)
+    return {
+      number: record.number,
+      title: record.title,
+      body: record.body,
+      state: record.state,
+      author: 'demo-contributor',
+      labels: record.draft ? ['draft'] : ['enhancement'],
+      createdAt: record.createdAt,
+      closedAt: record.closedAt,
+      mergedAt: record.mergedAt,
+      updatedAt: record.closedAt,
+      url: record.url,
+      commentsCount: record.commentsCount,
+      comments: record.commentsCount ? [{ author: 'demo-reviewer', body: '演示评论：该改动已完成检查。', createdAt: record.closedAt }] : [],
+      commentsComplete: true,
+      commentsError: null,
+    }
+  }
+
+  async exportPullRequestRecords(id: string, search: string): Promise<Blob> {
+    const seed = repoSeed(id) ?? REPOSITORIES[0]
+    if (seed.coverage.state === 'missing') throw new Error('当前示例没有可导出的 Pull Request 逐条数据')
+    const query = search.trim().toLocaleLowerCase()
+    const records = demoPullRequestRecords(seed).filter((record) =>
+      !query || String(record.number).includes(query) || record.title.toLocaleLowerCase().includes(query),
+    )
+    const cells = [
+      ['pull_number', 'title', 'state', 'created_at', 'closed_at', 'merged_at', 'merge_duration_days', 'draft', 'comments_count', 'url'],
+      ...records.map((record) => [record.number, record.title, record.state, record.createdAt ?? '', record.closedAt ?? '', record.mergedAt ?? '', record.durationDays, record.draft, record.commentsCount, record.url ?? '']),
+    ]
+    const escape = (value: string | number | boolean | null) => {
+      const text = value === null ? '' : String(value)
+      const safe = /^[=+@\t\r-]/.test(text) ? `'${text}` : text
+      return `"${safe.replaceAll('"', '""')}"`
+    }
+    return new Blob(['\ufeff', cells.map((row) => row.map(escape).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' })
   }
 
   async getPullRequests(id: string): Promise<PullRequestRecord[]> {
