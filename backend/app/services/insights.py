@@ -145,13 +145,71 @@ def _observed_event_counts(events: dict[str, list[dict]], start, end) -> dict[st
     }
 
 
-def repository_insights(session, repository_id):
+def repository_insights(session, repository_id, window_days=90):
     if session.get(Repository, repository_id) is None:
         raise AppError(404, "RESOURCE_NOT_FOUND", "本地仓库不存在")
-    run = session.scalar(select(RepositoryInsightRun).where(RepositoryInsightRun.repository_id == repository_id, RepositoryInsightRun.metric_version == METRIC_VERSION).order_by(desc(RepositoryInsightRun.analyzed_at), desc(RepositoryInsightRun.run_id)).limit(1))
-    if run:
-        return json.loads(run.result_json)
-    return {"repository_id": repository_id, "run_id": None, "metric_version": METRIC_VERSION, "status": "missing", "window_start": None, "window_end": None, "timezone": "UTC", "analyzed_at": None, "source_task_ids": [], "source_archive_paths": [], "origin": None, "sources": {}, "insights": {}, "limitations": ["尚无事件级分析。请采集活动数据，或通过本地命令安全回放已有归档；旧概况仍可查看。"]}
+    if window_days is not None and window_days not in {30, 90, 180}:
+        raise AppError(422, "VALIDATION_ERROR", "分析范围只支持 30、90 或 180 天")
+
+    runs = session.scalars(select(RepositoryInsightRun).where(
+        RepositoryInsightRun.repository_id == repository_id,
+        RepositoryInsightRun.metric_version == METRIC_VERSION,
+    ).order_by(desc(RepositoryInsightRun.analyzed_at), desc(RepositoryInsightRun.run_id))).all()
+    available_days = max(
+        (max(0, int((run.window_end - run.window_start).total_seconds() // 86400)) for run in runs),
+        default=0,
+    )
+    run = runs[0] if window_days is None and runs else next((
+        candidate for candidate in runs
+        if window_days is not None and candidate.window_start <= candidate.window_end - timedelta(days=window_days)
+    ), None)
+    if run is None:
+        reason = (
+            f"当前尚无可用的事件级分析数据。请选择快速或完整窗口采集 {window_days or 90} 天范围后重试。"
+            if not runs else
+            f"当前数据最多覆盖 {available_days} 天，未覆盖所选的 {window_days or 90} 天。请选择快速或完整窗口采集该范围。"
+        )
+        return {
+            "repository_id": repository_id, "run_id": None, "metric_version": METRIC_VERSION,
+            "status": "missing", "window_start": None, "window_end": None, "timezone": "UTC",
+            "analyzed_at": iso_z(runs[0].analyzed_at) if runs else None,
+            "source_task_ids": [], "source_archive_paths": [], "origin": None, "sources": {}, "insights": {},
+            "requested_window_days": window_days, "window_available": False,
+            "available_window_days": available_days, "window_reason": reason, "limitations": [reason],
+        }
+
+    end = run.window_end
+    start = run.window_start if window_days is None else end - timedelta(days=window_days)
+    try:
+        sources = json.loads(run.module_coverage_json)
+        source_task_ids = json.loads(run.source_task_ids_json)
+        source_archive_paths = json.loads(run.source_archive_paths_json)
+        limitations = json.loads(run.limitations_json)
+    except (TypeError, ValueError) as exc:
+        raise AppError(503, "INSIGHT_RUN_UNAVAILABLE", "分析运行的来源信息无法读取，请重新采集仓库数据") from exc
+    if not isinstance(sources, dict):
+        raise AppError(503, "INSIGHT_RUN_UNAVAILABLE", "分析运行缺少模块覆盖信息，请重新采集仓库数据")
+
+    events = _stored_window_events(session, repository_id, start, end)
+    metrics = calculate_insights(events, sources, start, end)
+    states = [metric["quality"]["status"] for metric in metrics.values()]
+    status = "missing" if all(state == "missing" for state in states) else "partial" if any(state in {"partial", "missing", "failed"} for state in states) else "ready"
+    result = json.loads(run.result_json)
+    result.update({
+        "status": status,
+        "window_start": iso_z(start),
+        "window_end": iso_z(end),
+        "source_task_ids": source_task_ids if isinstance(source_task_ids, list) else [],
+        "source_archive_paths": source_archive_paths if isinstance(source_archive_paths, list) else [],
+        "sources": sources,
+        "insights": metrics,
+        "requested_window_days": window_days,
+        "window_available": True,
+        "available_window_days": available_days,
+        "window_reason": None,
+        "limitations": limitations if isinstance(limitations, list) else list(LIMITATIONS),
+    })
+    return result
 
 
 def repository_release_detail(session, repository_id, release_id):

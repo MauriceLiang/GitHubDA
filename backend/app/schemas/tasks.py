@@ -27,6 +27,7 @@ class TaskResponse(DTO):
     type: str
     depth: Literal["basic", "deep"] | None = None
     scope_kind: Literal["quick", "window", "incremental", "backfill"] | None = "quick"
+    window_days: int | None = Field(default=None, ge=1)
     window_start: str | None = None
     window_end: str | None = None
     status: Literal["queued", "running", "succeeded", "partial", "failed", "cancelled"]

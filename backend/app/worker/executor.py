@@ -276,6 +276,17 @@ def execute_task(session_factory, task_id: str, github: GitHubClient) -> None:
             if reporter:
                 collection_label = "历史回填" if task.scope_kind == "backfill" else "重叠增量窗口" if task.scope_kind == "incremental" else "完整时间窗" if task.scope_kind == "window" else "快速预算"
                 reporter.set_phase("collecting", f"正在采集{collection_label}深度活动数据", 12)
+            effective_page_cap = None if task.scope_kind in {"window", "incremental"} else getattr(github, "max_pages", None)
+            logger.info(
+                "Collecting repository activity task_id=%s repository_id=%s scope_kind=%s window_days=%s window_start=%s window_end=%s max_pages=%s",
+                task.task_id,
+                task.repository_id,
+                task.scope_kind,
+                max(1, int((window_end - window_start).total_seconds() // 86400)),
+                iso_z(window_start),
+                iso_z(window_end),
+                effective_page_cap,
+            )
             activity, depth_coverage, deferred_until = collect_deep(
                 github, cleaned["full_name"], window_start, window_end, task, reporter, session_factory,
                 query_start=query_start,

@@ -168,17 +168,14 @@ function mapCoverage(quality: Record<string, any> | undefined, label: string): C
   }
   return { state: 'complete', label: '完整覆盖' }
 }
-function mapPoints(value: unknown, window: TimeWindow): TimePoint[] {
-  const points = array(value).map((item) => ({
+function mapPoints(value: unknown): TimePoint[] {
+  return array(value).map((item) => ({
     date: String(item.start ?? '').slice(0, 10),
     value: numberOrNull(item.value),
     observedValue: numberOrNull(item.observed_events),
+    quality: textOrNull(item.quality) ?? undefined,
+    completeWeek: typeof item.complete_week === 'boolean' ? item.complete_week : undefined,
   }))
-  if (!points.length) return points
-  const end = Date.parse(`${points[points.length - 1].date}T00:00:00Z`)
-  if (!Number.isFinite(end)) return points
-  const cutoff = end - window * 86_400_000
-  return points.filter((point) => Date.parse(`${point.date}T00:00:00Z`) >= cutoff)
 }
 function durationHistogram(metric: Record<string, any> | undefined, label: string): HistogramResult {
   const quality = object(metric?.quality)
@@ -362,11 +359,11 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
     })
   }
 
-  async refreshRepository(id: string, scopeKind: 'quick' | 'window' = 'quick'): Promise<string> {
+  async refreshRepository(id: string, options: { scopeKind: 'quick' | 'window'; windowDays: TimeWindow }): Promise<string> {
     const result = await data<Record<string, any>>(`/repositories/${repositoryId(id)}/refresh`, {
       method: 'POST',
       headers: { 'Idempotency-Key': crypto.randomUUID() },
-      body: JSON.stringify({ depth: 'deep', force: false, scope_kind: scopeKind }),
+      body: JSON.stringify({ depth: 'deep', force: false, scope_kind: options.scopeKind, window_days: options.windowDays }),
     })
     return String(result.task_id)
   }
@@ -376,10 +373,13 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
     const [detail, analysis, result] = await Promise.all([
       data<Record<string, any>>(`/repositories/${numericId}`),
       data<Record<string, any>>(`/repositories/${numericId}/analysis?depth=deep`),
-      data<Record<string, any>>(`/repositories/${numericId}/insights`),
+      data<Record<string, any>>(`/repositories/${numericId}/insights?window_days=${window}`),
     ])
     const repository = mapRepository(detail)
-    const insightMap = object(result.insights)
+    const windowAvailable = result.window_available === true
+    const availabilityReason = textOrNull(result.window_reason)
+      ?? `当前数据未覆盖所选的 ${window} 天范围，请按该范围采集后查看。`
+    const insightMap = windowAvailable ? object(result.insights) : {}
     const commit = object(insightMap.commit_activity)
     const issue = object(insightMap.issue_resolution)
     const pull = object(insightMap.pr_merges)
@@ -388,30 +388,35 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
     const issueQuality = object(issue.quality)
     const pullQuality = object(pull.quality)
     const releaseQuality = object(release.quality)
-    const start = shortDate(result.window_start ?? object(analysis.source_metadata).window_start)
-    const end = shortDate(result.window_end ?? object(analysis.source_metadata).window_end)
-    const collectedAt = textOrNull(result.analyzed_at ?? object(analysis.source_metadata).collected_at)
-    const weeklyCommits = mapPoints(commit.weekly, window)
-    const weeklyIssues = mapPoints(issue.weekly, window)
-    const weeklyPulls = mapPoints(pull.weekly, window)
+    const start = windowAvailable ? shortDate(result.window_start ?? object(analysis.source_metadata).window_start) : null
+    const end = windowAvailable ? shortDate(result.window_end ?? object(analysis.source_metadata).window_end) : null
+    const collectedAt = windowAvailable ? textOrNull(result.analyzed_at ?? object(analysis.source_metadata).collected_at) : null
+    const weeklyCommits = mapPoints(commit.weekly)
+    const weeklyIssues = mapPoints(issue.weekly)
+    const weeklyPulls = mapPoints(pull.weekly)
     const commitsCoverage = mapCoverage(commitQuality, 'Commit')
     const issueCoverage = mapCoverage(issueQuality, 'Issue')
     const pullCoverage = mapCoverage(pullQuality, 'PR')
     const releaseCoverage = mapCoverage(releaseQuality, 'Release')
     const coverages = [commitsCoverage, issueCoverage, pullCoverage, releaseCoverage]
-    const coverage: Coverage = coverages.every((item) => item.state === 'complete')
+    const coverage: Coverage = !windowAvailable
+      ? { state: 'missing', label: '范围未覆盖', detail: availabilityReason }
+      : coverages.every((item) => item.state === 'complete')
       ? { state: 'complete', label: '完整覆盖' }
       : coverages.every((item) => item.state === 'missing')
         ? { state: 'missing', label: '未采集', detail: result.limitations?.[0] }
         : { state: 'partial', label: '部分覆盖', detail: coverages.filter((item) => item.state !== 'complete').map((item) => item.label).join(' · ') }
 
-    repository.status = statusFromInsights(result.status) ?? repository.status
+    if (windowAvailable) repository.status = statusFromInsights(result.status) ?? repository.status
     const change = numberOrNull(commit.change_rate_pct)
     repository.activityDelta = commitQuality.status === 'ready' ? change : null
 
-    const commitsTotal = commitQuality.status === 'ready' && weeklyCommits.length && weeklyCommits.every((point) => point.value !== null)
-      ? weeklyCommits.reduce((sum, point) => sum + (point.value ?? 0), 0)
+    const completeCommitWeeks = weeklyCommits.filter((point) => point.completeWeek === true && point.quality === 'ready' && point.value !== null)
+    const commitsTotal = windowAvailable && commitQuality.status === 'ready' && completeCommitWeeks.length
+      ? completeCommitWeeks.reduce((sum, point) => sum + (point.value ?? 0), 0)
       : null
+    const commitsNote = commitsCoverage.detail
+      ?? (completeCommitWeeks.length ? `默认分支 · UTC 自然周 · ${completeCommitWeeks.length} 个完整周` : '所选范围内没有完整 UTC 自然周，未汇总不完整边界周')
     const issueDuration = durationHistogram(issue, 'Issue')
     const prDuration = durationHistogram(pull, 'PR')
     const releaseIntervals = array(release.timeline).slice(1).map((item, index) => ({
@@ -432,7 +437,7 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
     const metricWindow = { start, end }
     const metrics = {
       metrics: [
-        summaryMetric('M01', '完整周 Commit 数', commitsTotal, '次', commitsCoverage.detail ?? '默认分支 · UTC 自然周', numberOrNull(commitQuality.valid_samples) ?? undefined),
+        summaryMetric('M01', '完整周 Commit 数', commitsTotal, '次', commitsNote, commitsTotal ?? undefined),
         summaryMetric('M06', 'Issue 关闭耗时中位数', issueDuration.percentiles.p50, '天', qualityReason(issueQuality.reason) ?? 'closed_at − created_at', issueDuration.sampleSize),
         summaryMetric('M10', 'PR 合并耗时中位数', prDuration.percentiles.p50, '天', qualityReason(pullQuality.reason) ?? 'merged_at − created_at', prDuration.sampleSize),
         summaryMetric('M12', '正式发布中位间隔', numberOrNull(release.median_interval_days), '天', qualityReason(releaseQuality.reason) ?? '相邻正式 Release', numberOrNull(releaseQuality.valid_samples) ?? undefined),
@@ -469,6 +474,12 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
       coverage,
       collectedAt,
       observations,
+      windowAvailability: {
+        requestedDays: window,
+        available: windowAvailable,
+        availableDays: numberOrNull(result.available_window_days),
+        reason: windowAvailable ? null : availabilityReason,
+      },
     }
   }
 
@@ -794,6 +805,7 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
         progressPercent: numberOrNull(task.progress_percent),
         progressKind: task.progress_kind === 'stages' || task.progress_kind === 'records' || task.progress_kind === 'indeterminate' ? task.progress_kind : 'unknown',
         scopeKind: task.scope_kind === 'backfill' || task.scope_kind === 'incremental' || task.scope_kind === 'window' ? task.scope_kind : task.scope_kind === null ? null : 'quick',
+        windowDays: numberOrNull(task.window_days),
         windowStart: textOrNull(task.window_start),
         windowEnd: textOrNull(task.window_end),
         resumeAfter: textOrNull(task.resume_after),
@@ -826,8 +838,8 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
     return String(result.task_id)
   }
 
-  exportInsights(id: string): Promise<Blob> {
-    return csv(`/repositories/${repositoryId(id)}/insights/export.csv`)
+  exportInsights(id: string, windowDays: TimeWindow): Promise<Blob> {
+    return csv(`/repositories/${repositoryId(id)}/insights/export.csv?window_days=${windowDays}`)
   }
 
   exportIssueRecords(id: string, search: string): Promise<Blob> {

@@ -75,6 +75,14 @@ function percent(task: TaskItem): number | null {
   return task.progressKind === 'stages' || task.progressKind === 'records' ? task.progressPercent ?? null : null
 }
 
+function taskScopeLabel(task: TaskItem): string {
+  if (task.scopeKind === 'window') return `完整窗口${task.windowDays ? ` · ${task.windowDays} 天` : ''}`
+  if (task.scopeKind === 'quick') return `快速采集${task.windowDays ? ` · ${task.windowDays} 天` : ''}`
+  if (task.scopeKind === 'incremental') return '增量同步'
+  if (task.scopeKind === 'backfill') return '历史回填'
+  return ''
+}
+
 function taskDetail(task: TaskItem): string {
   if (task.taskType === 'dataset_import') {
     if (task.processedRecords !== null && task.processedRecords !== undefined && task.totalRecords !== null && task.totalRecords !== undefined) {
@@ -88,12 +96,17 @@ function taskDetail(task: TaskItem): string {
     }
     return task.version ? `数据集导入 · ${task.version}` : '数据集导入'
   }
+  const scopeLabel = taskScopeLabel(task)
+  const windowDates = task.windowStart && task.windowEnd
+    ? `${task.windowStart.slice(0, 10)} 至 ${task.windowEnd.slice(0, 10)}`
+    : ''
   const active = task.modules?.find((module) => module.status === 'running')
-  if (active) return `${active.pagesFetched} 页 · ${active.observedItems.toLocaleString('en-US')} 条${active.pageCap ? ` / ${active.pageCap} 页预算` : ''}`
-  if (task.resumeAfter) return `限流暂停 · 预计 ${new Date(task.resumeAfter).toLocaleString() } 恢复`
-  if (task.scopeKind === 'window' && task.windowStart && task.windowEnd) return `完整窗口 · ${task.windowStart.slice(0, 10)} 至 ${task.windowEnd.slice(0, 10)}`
+  if (active) return `${scopeLabel ? `${scopeLabel} · ` : ''}${windowDates ? `${windowDates} · ` : ''}${active.pagesFetched} 页 · ${active.observedItems.toLocaleString('en-US')} 条${active.pageCap ? ` / ${active.pageCap} 页预算` : ''}`
+  if (task.resumeAfter) return `${scopeLabel ? `${scopeLabel} · ` : ''}${windowDates ? `${windowDates} · ` : ''}限流暂停 · 预计 ${new Date(task.resumeAfter).toLocaleString() } 恢复`
+  if ((task.scopeKind === 'quick' || task.scopeKind === 'window') && windowDates) return `${scopeLabel} · ${windowDates}`
   if (task.scopeKind === 'incremental' && task.windowStart && task.windowEnd) return `增量同步 · 重叠区间 ${task.windowStart.slice(0, 10)} 至 ${task.windowEnd.slice(0, 10)}`
   if (task.scopeKind === 'backfill' && task.windowStart && task.windowEnd) return `历史回填 · ${task.windowStart.slice(0, 10)} 至 ${task.windowEnd.slice(0, 10)}`
+  if (scopeLabel) return `${scopeLabel}${windowDates ? ` · ${windowDates}` : ''}`
   const latest = task.modules?.filter((module) => module.pagesFetched > 0).at(-1)
   return latest ? `已采集 ${latest.pagesFetched} 页 · ${latest.observedItems.toLocaleString('en-US')} 条` : ''
 }
@@ -138,7 +151,7 @@ function taskDetail(task: TaskItem): string {
               <div class="min-w-0">
                 <div class="truncate text-[13px] font-semibold">{{ task.repository }}</div>
                 <div class="text-[11.5px] text-muted">
-                  {{ task.taskType === 'dataset_import' ? `数据集导入${task.version ? ` · ${task.version}` : ''}` : moduleLabel[task.module] ?? task.module }}
+                  {{ task.taskType === 'dataset_import' ? `数据集导入${task.version ? ` · ${task.version}` : ''}` : `${moduleLabel[task.module] ?? task.module}${taskScopeLabel(task) ? ` · ${taskScopeLabel(task)}` : ''}` }}
                   <span v-if="task.isDemo" class="ml-1 text-s1">· 演示任务</span>
                 </div>
                 <div v-if="taskDetail(task)" class="mt-0.5 truncate text-[10.5px] text-muted" :title="taskDetail(task)">{{ taskDetail(task) }}</div>

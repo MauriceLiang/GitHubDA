@@ -81,7 +81,7 @@ def refresh_repository(
     if cached:
         response.status_code = cached[1]
         return envelope(request, cached[0])
-    result = enqueue_refresh(session, repository_id, body.depth, idempotency_key, force=body.force, scope_kind=body.scope_kind)
+    result = enqueue_refresh(session, repository_id, body.depth, idempotency_key, force=body.force, scope_kind=body.scope_kind, window_days=body.window_days)
     result, status_code = add_idempotency_response(session, "repository.refresh", idempotency_key, result, 202)
     response.status_code = status_code
     return envelope(request, result)

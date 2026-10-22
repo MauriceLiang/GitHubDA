@@ -272,6 +272,42 @@ def test_deep_partial_coverage_keeps_basic_profile_complete(backend_client, monk
     assert archived["_meta"]["sources"]["commits"]["coverage"] == "partial"
 
 
+def test_worker_uses_frozen_window_days_and_keeps_release_collection_at_365_days(backend_client, monkeypatch):
+    client, factory, default_github = backend_client
+    _create_repository(client)
+    _patch_archives(monkeypatch)
+    now = utc_now().replace(microsecond=0)
+    start = now - timedelta(days=180)
+    task_id = str(uuid4())
+    with factory() as session:
+        session.add(CollectionTask(
+            task_id=task_id,
+            repository_id=123,
+            depth="deep",
+            scope_kind="quick",
+            scope_json=json.dumps({"window_start": iso_z(start), "window_end": iso_z(now), "window_days": 180}),
+            status="queued",
+            created_at=now,
+        ))
+        session.commit()
+    with factory() as session:
+        claimed = claim_next_task(session, "test-worker", 60)
+        assert claimed and claimed.task_id == task_id and claimed.attempt == 1
+
+    github = WorkerGitHub(default_github.repository)
+    execute_task(factory, task_id, github)
+
+    with factory() as session:
+        task = session.get(CollectionTask, task_id)
+        run = session.scalar(select(RepositoryInsightRun).where(RepositoryInsightRun.repository_id == 123))
+        window = session.scalar(select(ActivityWindow).where(ActivityWindow.repository_id == 123))
+    assert task.status == "succeeded"
+    assert github.deep_queries[:2] == [("commits", iso_z(start), iso_z(now)), ("issues", iso_z(start), None)]
+    assert window.window_start == start and window.window_end == now
+    sources = json.loads(run.module_coverage_json)
+    assert sources["releases"]["requested_interval"] == [iso_z(now - timedelta(days=365)), iso_z(now)]
+
+
 def test_successful_empty_activity_is_complete_and_distinct_from_failed_endpoint(backend_client, monkeypatch):
     client, factory, default_github = backend_client
     _create_repository(client)

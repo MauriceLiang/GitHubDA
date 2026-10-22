@@ -4,13 +4,17 @@ import type { Granularity, TimeWindow } from '@/services/types'
 
 /** Cross-page analysis preferences (shared by header, tabs and comparison). */
 export const useAnalysisStore = defineStore('analysis', () => {
-  const timeWindow = ref<TimeWindow>(90)
+  const preferenceKey = 'repovantage-analysis-window'
+  const savedWindow = typeof localStorage === 'undefined' ? null : Number(localStorage.getItem(preferenceKey))
+  const timeWindow = ref<TimeWindow>(savedWindow === 30 || savedWindow === 90 || savedWindow === 180 ? savedWindow : 90)
+  const collectionScope = ref<'quick' | 'window'>('quick')
   const granularity = ref<Granularity>('week')
   const compareIds = ref<string[]>([])
   const recentIds = ref<string[]>([])
 
   function setWindow(value: TimeWindow) {
     timeWindow.value = value
+    if (typeof localStorage !== 'undefined') localStorage.setItem(preferenceKey, String(value))
   }
   function setGranularity(value: Granularity) {
     granularity.value = value
@@ -27,5 +31,5 @@ export const useAnalysisStore = defineStore('analysis', () => {
     recentIds.value = [id, ...recentIds.value.filter((x) => x !== id)].slice(0, 6)
   }
 
-  return { timeWindow, granularity, compareIds, recentIds, setWindow, setGranularity, toggleCompare, setCompare, remember }
+  return { timeWindow, collectionScope, granularity, compareIds, recentIds, setWindow, setGranularity, toggleCompare, setCompare, remember }
 })

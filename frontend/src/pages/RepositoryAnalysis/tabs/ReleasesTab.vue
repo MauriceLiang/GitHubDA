@@ -68,7 +68,7 @@ async function openRelease(release: ReleaseRecord) {
       <div class="flex items-start justify-between gap-3">
         <div>
           <h3 class="m-0 text-[15.5px] font-semibold">相邻发布间隔</h3>
-          <p class="mt-0.5 text-[12px] text-muted">按发布时间排序后的相邻天数</p>
+          <p class="mt-0.5 text-[12px] text-muted">近 365 天正式 Release · 按发布时间排序后的相邻天数</p>
         </div>
         <span class="font-mono text-[11.5px] text-muted">n={{ analysis.releaseIntervals.length }} · P50 {{ median?.toLocaleString('en-US', { maximumFractionDigits: 1 }) ?? '—' }} 天</span>
       </div>

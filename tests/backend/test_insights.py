@@ -99,16 +99,63 @@ def test_import_replay_idempotency_versions_api_and_csv(backend_client):
         session.commit()
         assert session.scalar(select(func.count()).select_from(RepositoryActivityEvent)) == 107
         assert session.scalar(select(func.count()).select_from(RepositoryInsightRun)) == 2
+    unavailable_response = client.get("/api/v1/repositories/123/insights?window_days=180", headers=HEADERS)
+    assert unavailable_response.status_code == 200, unavailable_response.text
+    unavailable = unavailable_response.json()["data"]
+    assert unavailable["window_available"] is False
+    assert unavailable["available_window_days"] == 56
+    assert unavailable["insights"] == {}
+    thirty_response = client.get("/api/v1/repositories/123/insights?window_days=30", headers=HEADERS)
+    assert thirty_response.status_code == 200, thirty_response.text
+    thirty_day = thirty_response.json()["data"]
+    assert thirty_day["window_available"] is True
+    assert thirty_day["requested_window_days"] == 30
+    assert thirty_day["window_start"] == iso_z(END - timedelta(days=30))
     response = client.get("/api/v1/repositories/123/insights", headers=HEADERS)
     assert response.status_code == 200, response.text
     data = response.json()
     assert data["meta"]["request_id"]
     assert data["data"]["metric_version"] == "insights-v1"
-    series = client.get("/api/v1/repositories/123/insights/series?metric=commits_weekly", headers=HEADERS).json()["data"]
-    assert series["points"][0]["value"] == 5
-    assert client.get("/api/v1/repositories/123/insights/quality", headers=HEADERS).status_code == 200
-    exported = client.get("/api/v1/repositories/123/insights/export.csv", headers=HEADERS)
+    series = client.get("/api/v1/repositories/123/insights/series?metric=commits_weekly&window_days=30", headers=HEADERS).json()["data"]
+    first_complete = next(point for point in series["points"] if point["complete_week"])
+    assert first_complete["value"] == 10
+    assert client.get("/api/v1/repositories/123/insights/quality?window_days=30", headers=HEADERS).status_code == 200
+    exported = client.get("/api/v1/repositories/123/insights/export.csv?window_days=30", headers=HEADERS)
     assert exported.status_code == 200 and "insights-v1" in exported.text and "window_start" in exported.text
+
+
+def test_insights_recompute_selected_window_and_keep_release_window_fixed(backend_client):
+    client, factory, _ = backend_client
+    client.post("/api/v1/library/repositories", json={"full_name": "example/project", "auto_analyze": False}, headers=HEADERS)
+    sources = {key: {"coverage": "complete", "collected_at": iso_z(END)} for key in fixture()}
+    with factory() as session:
+        persist_insights(session, 123, "window-task", fixture(), sources, END - timedelta(days=180), END, [])
+        session.commit()
+
+    results = {}
+    for days in (30, 90, 180):
+        response = client.get(f"/api/v1/repositories/123/insights?window_days={days}", headers=HEADERS)
+        assert response.status_code == 200, response.text
+        results[days] = response.json()["data"]
+    commit_totals = {}
+    for days, result in results.items():
+        assert result["window_available"] is True
+        assert result["requested_window_days"] == days
+        assert result["window_start"] == iso_z(END - timedelta(days=days))
+        assert result["window_end"] == iso_z(END)
+        commits = result["insights"]["commit_activity"]
+        commit_totals[days] = sum(
+            point["value"] for point in commits["weekly"]
+            if point["complete_week"] and point["quality"] == "ready" and point["value"] is not None
+        )
+        assert results[days]["insights"]["release_cadence"]["window_start"] == iso_z(END - timedelta(days=365))
+    default_window = client.get("/api/v1/repositories/123/insights", headers=HEADERS).json()["data"]
+    assert default_window["requested_window_days"] == 90
+    assert default_window["window_start"] == iso_z(END - timedelta(days=90))
+    assert results[30]["insights"]["issue_resolution"]["quality"]["valid_samples"] == 0
+    assert results[90]["insights"]["issue_resolution"]["quality"]["valid_samples"] == 10
+    assert commit_totals == {30: 59, 90: 89, 180: 89}
+    assert client.get("/api/v1/repositories/123/insights?window_days=60", headers=HEADERS).status_code == 422
 
 
 def test_closed_issue_records_search_pagination_and_safe_csv(backend_client, monkeypatch, tmp_path):

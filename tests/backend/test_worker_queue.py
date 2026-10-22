@@ -120,6 +120,52 @@ def test_backfill_queue_yields_to_normal_collection_tasks(backend_client):
     assert claimed and claimed.task_id == "interactive-window-task"
 
 
+def test_refresh_freezes_selected_window_and_only_reuses_matching_scope(backend_client):
+    client, _factory, _github = backend_client
+    added = client.post("/api/v1/library/repositories", json={"full_name": "example/project", "auto_analyze": False}, headers=HEADERS)
+    repository_id = added.json()["data"]["repository_id"]
+
+    def refresh(scope_kind, window_days, key):
+        return client.post(
+            f"/api/v1/repositories/{repository_id}/refresh",
+            json={"depth": "deep", "scope_kind": scope_kind, "window_days": window_days},
+            headers={**HEADERS, "Idempotency-Key": key},
+        )
+
+    first = refresh("quick", 30, "quick-30-first")
+    assert first.status_code == 202, first.text
+    first_id = first.json()["data"]["task_id"]
+    repeated = refresh("quick", 30, "quick-30-repeat")
+    assert repeated.status_code == 202 and repeated.json()["data"]["task_id"] == first_id
+    assert repeated.json()["data"]["reused"] is True
+    different_window = refresh("quick", 180, "quick-180")
+    assert different_window.status_code == 202, different_window.text
+    second_id = different_window.json()["data"]["task_id"]
+    assert second_id != first_id
+    different_mode = refresh("window", 180, "window-180")
+    assert different_mode.status_code == 202, different_mode.text
+    third_id = different_mode.json()["data"]["task_id"]
+    assert third_id not in {first_id, second_id}
+
+    tasks = client.get(f"/api/v1/tasks?repository_id={repository_id}&per_page=100", headers=HEADERS).json()["data"]["items"]
+    by_id = {task["task_id"]: task for task in tasks}
+    assert by_id[first_id]["window_days"] == 30
+    assert by_id[second_id]["window_days"] == 180
+    assert by_id[third_id]["scope_kind"] == "window"
+    assert by_id[third_id]["window_days"] == 180
+    for task, days in ((by_id[first_id], 30), (by_id[second_id], 180), (by_id[third_id], 180)):
+        from datetime import datetime
+        start = datetime.fromisoformat(task["window_start"].replace("Z", "+00:00"))
+        end = datetime.fromisoformat(task["window_end"].replace("Z", "+00:00"))
+        assert (end - start).days == days
+    invalid = client.post(
+        f"/api/v1/repositories/{repository_id}/refresh",
+        json={"depth": "deep", "scope_kind": "quick", "window_days": 60},
+        headers={**HEADERS, "Idempotency-Key": "invalid-window"},
+    )
+    assert invalid.status_code == 422
+
+
 def test_dataset_import_worker_ignores_github_quota_and_recovers_expired_lease(backend_client):
     client, factory, _github = backend_client
     added = client.post("/api/v1/library/repositories", json={"full_name": "example/project", "auto_analyze": False}, headers=HEADERS).json()["data"]

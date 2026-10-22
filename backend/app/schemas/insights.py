@@ -247,6 +247,10 @@ class RepositoryInsights(BaseModel):
     sources: dict[str, dict[str, Any]]
     insights: dict[str, CommitActivity | DurationMetric | ReleaseMetric]
     limitations: list[str]
+    requested_window_days: Literal[30, 90, 180] = 90
+    window_available: bool = True
+    available_window_days: int | None = None
+    window_reason: str | None = None
 
 
 class InsightSeries(BaseModel):

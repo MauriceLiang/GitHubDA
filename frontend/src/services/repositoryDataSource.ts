@@ -23,7 +23,7 @@ export interface RepositoryDataSource {
   addRepository(input: string): Promise<{ repositoryId: string; taskId: string | null; existing: boolean }>
   removeRepository(id: string): Promise<void>
   clearRepositoryData(ids: string[], options?: { removeFromLibrary?: boolean }): Promise<void>
-  refreshRepository(id: string, scopeKind?: 'quick' | 'window'): Promise<string>
+  refreshRepository(id: string, options: { scopeKind: 'quick' | 'window'; windowDays: TimeWindow }): Promise<string>
 
   /**
    * Full analysis bundle for one repository.
@@ -50,7 +50,7 @@ export interface RepositoryDataSource {
 
   listTasks(): Promise<TaskItem[]>
   retryTask(id: string): Promise<string>
-  exportInsights(id: string): Promise<Blob>
+  exportInsights(id: string, windowDays: TimeWindow): Promise<Blob>
   exportComparison(ids: string[], mode: ComparisonMode): Promise<Blob>
   exportRepositories(scope: 'library' | 'research', datasetId?: string): Promise<Blob>
 }
