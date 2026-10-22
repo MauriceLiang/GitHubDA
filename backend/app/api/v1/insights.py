@@ -70,7 +70,7 @@ def export_closed_issues(repository_id: int, search: str = Query(default="", max
     for item in result["items"]:
         row = [item["number"], item["title"], item["created_at"], item["closed_at"], item["duration_days"], item["url"]]
         writer.writerow(["'" + value if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")) else value for value in row])
-    return Response("\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="githubda_issues_{repository_id}.csv"'})
+    return Response("\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="repovantage_issues_{repository_id}.csv"'})
 
 
 @router.get("/{repository_id}/issues/{issue_number}", response_model=SuccessEnvelope[ClosedIssueDetail])
@@ -110,7 +110,7 @@ def export_pull_requests(repository_id: int, search: str = Query(default="", max
     for item in result["items"]:
         row = [item["number"], item["title"], item["state"], item["created_at"], item["closed_at"], item["merged_at"], item["duration_days"], item["draft"], item["comments_count"], item["url"]]
         writer.writerow(["'" + value if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")) else value for value in row])
-    return Response("\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="githubda_pull_requests_{repository_id}.csv"'})
+    return Response("\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="repovantage_pull_requests_{repository_id}.csv"'})
 
 
 @router.get("/{repository_id}/pull-requests/{pull_number}", response_model=SuccessEnvelope[PullRequestDetail])
@@ -152,4 +152,4 @@ def export_insights(repository_id: int, session: Session = Depends(get_session))
         for point in records:
             row = [repository_id, result["run_id"], result["metric_version"], point["metric"], point["unit"], value["window_start"], value["window_end"], point["start"], point["end"], point["value"], point["quality"], value["quality"]["valid_samples"], ";".join(result["source_task_ids"])]
             writer.writerow(["'" + item if isinstance(item, str) and item.startswith(("=", "+", "-", "@", "\t", "\r")) else item for item in row])
-    return Response("\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="githubda_insights_{repository_id}.csv"'})
+    return Response("\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="repovantage_insights_{repository_id}.csv"'})

@@ -1,1 +1,1 @@
-"""Application services for the GitHubDA backend."""
+"""Application services for the RepoVantage backend."""

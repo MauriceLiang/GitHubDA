@@ -1,6 +1,6 @@
-# GitHubDA 前端
+# RepoVantage 前端
 
-GitHubDA 主前端使用 Vue 3、TypeScript 与 Vite。生产构建由 FastAPI 提供；默认通过本机浏览器网关读取和修改真实后端数据。仓库级 Mock 数据仅用于明确启用的原型演示。
+RepoVantage 主前端使用 Vue 3、TypeScript 与 Vite。生产构建由 FastAPI 提供；默认通过本机浏览器网关读取和修改真实后端数据。仓库级 Mock 数据仅用于明确启用的原型演示。
 
 ## 本地开发
 

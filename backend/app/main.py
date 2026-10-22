@@ -19,7 +19,7 @@ from backend.app.schemas.common import ErrorResponse
 from backend.app.services.repositories import ensure_default_datasets
 
 
-logger = logging.getLogger("githubda.api")
+logger = logging.getLogger("repovantage.api")
 
 
 @asynccontextmanager
@@ -36,7 +36,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="GitHubDA API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="RepoVantage API", version="1.0.0", lifespan=lifespan)
 
 
 @app.middleware("http")

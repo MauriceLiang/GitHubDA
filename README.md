@@ -1,6 +1,8 @@
-# GitHubDA
+# RepoVantage
 
-GitHub 开源项目分析台，包含 Vue 3 前端、FastAPI、SQLite 和采集 Worker。
+RepoVantage 是一款 GitHub 开源项目分析台，包含 Vue 3 前端、FastAPI、SQLite 和采集 Worker。
+
+项目仓库：[MauriceLiang/RepoVantage](https://github.com/MauriceLiang/RepoVantage)
 
 ## 一键启动
 

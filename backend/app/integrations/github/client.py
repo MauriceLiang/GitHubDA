@@ -53,7 +53,7 @@ class GitHubClient:
         headers = {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2026-03-10",
-            "User-Agent": "GitHubDA/0.1",
+            "User-Agent": "RepoVantage/0.1",
         }
         if request_id:
             headers["X-Request-ID"] = request_id

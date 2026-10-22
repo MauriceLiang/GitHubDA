@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>GitHubDA · 开源项目数据分析</title>
+    <title>RepoVantage · 开源项目数据分析</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -12,7 +12,7 @@
     />
     <script>
       // 主题需在首帧前确定，避免闪烁
-      const saved = localStorage.getItem('githubda-theme')
+      const saved = (localStorage.getItem('repovantage-theme') ?? localStorage.getItem('githubda-theme'))
       const dark = saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches
       if (dark) document.documentElement.classList.add('dark')
     </script>

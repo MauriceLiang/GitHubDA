@@ -1,4 +1,4 @@
-# GitHubDA 后端
+# RepoVantage 后端
 
 后端由 FastAPI、SQLite、Alembic 和独立 Worker 组成。它通过 GitHub REST API 读取公开仓库，保留原始响应归档、指标快照和分析任务历史。
 

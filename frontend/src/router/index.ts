@@ -17,7 +17,7 @@ const router = createRouter({
 
 router.afterEach((to) => {
   const title = to.meta.title ?? ''
-  document.title = title ? `${title} · GitHubDA` : 'GitHubDA · 开源项目数据分析'
+  document.title = title ? `${title} · RepoVantage` : 'RepoVantage · 开源项目数据分析'
 })
 
 export default router
