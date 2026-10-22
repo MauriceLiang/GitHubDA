@@ -42,8 +42,9 @@ const failed = computed(() => data.value?.repository.status === 'failed' || Bool
 async function refresh(scopeKind: 'quick' | 'window' = 'quick') {
   refreshing.value = true
   try {
-    await source.refreshRepository(repoId.value, scopeKind)
-    ui.toast(scopeKind === 'window' ? '完整时间窗采集任务已排队；如遇限流会保存进度后自动恢复' : '快速采集任务已排队，可在任务页查看进度')
+    const windowDays = analysisStore.timeWindow
+    await source.refreshRepository(repoId.value, { scopeKind, windowDays })
+    ui.toast(`已排队：${windowDays} 天 · ${scopeKind === 'window' ? '完整窗口采集' : '快速采集'}，可在任务页查看进度`)
     void router.push('/tasks')
   } catch (cause) {
     ui.toast(cause instanceof Error ? cause.message : '启动采集失败')
@@ -117,6 +118,16 @@ function openWeek(payload: { date: string; count: number }) {
       </GdEmptyState>
     </GdCard>
 
-    <component :is="tabComponent" v-else-if="data" :analysis="data" @select-week="openWeek" />
+    <GdCard v-else-if="data && !data.windowAvailability.available" padding="sm" :gap="false">
+      <div class="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 class="m-0 text-[15px] font-semibold">尚未采集所选的 {{ data.windowAvailability.requestedDays }} 天范围</h2>
+          <p class="mb-0 mt-1 text-[12px] text-muted">{{ data.windowAvailability.reason ?? '当前没有覆盖该范围的分析运行。采集完成后会按所选日期重新计算指标。' }}</p>
+        </div>
+        <GdButton :disabled="refreshing || clearing" @click="refresh(analysisStore.collectionScope)">按所选范围采集</GdButton>
+      </div>
+    </GdCard>
+
+    <component :is="tabComponent" v-else-if="data && data.windowAvailability.available" :analysis="data" @select-week="openWeek" />
   </div>
 </template>

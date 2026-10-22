@@ -25,7 +25,7 @@ def compare_insights(session, ids, mode='same_period'):
         raise AppError(422, 'VALIDATION_ERROR', '请选择2–5个不同仓库')
     if mode not in {'same_period', 'individual_periods'}:
         raise AppError(422, 'VALIDATION_ERROR', '不支持的对比方式')
-    results = [repository_insights(session, id) for id in ids]
+    results = [repository_insights(session, id, window_days=None) for id in ids]
     repos = [session.get(Repository, id) for id in ids]
     common_weeks = None
     for result in results:
@@ -76,7 +76,7 @@ def research_insights(session, dataset_id):
     rows = []
     windows = set()
     for id in ids:
-        result = repository_insights(session, id)
+        result = repository_insights(session, id, window_days=None)
         repo = session.get(Repository, id)
         rows.append({'repository_id': id, 'full_name': repo.full_name, 'language': repo.language or '未知', 'analyzed_at': result['analyzed_at'], 'window_start': result['window_start'], 'window_end': result['window_end'], 'run_id': result['run_id'], 'values': {key: metric_value(result, key) for key in INSIGHT_FIELDS}})
         if result['run_id']:

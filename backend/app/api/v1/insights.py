@@ -17,8 +17,10 @@ router = APIRouter(prefix="/repositories", tags=["insights"])
 
 
 @router.get("/{repository_id}/insights", response_model=SuccessEnvelope[RepositoryInsights])
-def insights(repository_id: int, request: Request, session: Session = Depends(get_session)):
-    return envelope(request, repository_insights(session, repository_id))
+def insights(repository_id: int, request: Request, window_days: int = Query(default=90), session: Session = Depends(get_session)):
+    if window_days not in {30, 90, 180}:
+        raise AppError(422, "VALIDATION_ERROR", "分析范围只支持 30、90 或 180 天")
+    return envelope(request, repository_insights(session, repository_id, window_days=window_days))
 
 
 @router.get("/{repository_id}/releases/{release_id}", response_model=SuccessEnvelope[ReleaseDetail])
@@ -124,22 +126,28 @@ def online_pull_request_detail(repository_id: int, request: Request, pull_number
 
 
 @router.get("/{repository_id}/insights/series", response_model=SuccessEnvelope[InsightSeries])
-def insight_series(repository_id: int, request: Request, metric: str = Query(pattern="^(commits_weekly|issues_closed_weekly|prs_merged_weekly)$"), session: Session = Depends(get_session)):
-    result = repository_insights(session, repository_id)
+def insight_series(repository_id: int, request: Request, metric: str = Query(pattern="^(commits_weekly|issues_closed_weekly|prs_merged_weekly)$"), window_days: int = Query(default=90), session: Session = Depends(get_session)):
+    if window_days not in {30, 90, 180}:
+        raise AppError(422, "VALIDATION_ERROR", "分析范围只支持 30、90 或 180 天")
+    result = repository_insights(session, repository_id, window_days=window_days)
     key = {"commits_weekly": "commit_activity", "issues_closed_weekly": "issue_resolution", "prs_merged_weekly": "pr_merges"}[metric]
     value = result["insights"].get(key, {})
     return envelope(request, {"metric": metric, "window_start": result["window_start"], "window_end": result["window_end"], "timezone": "UTC", "unit": "events", "points": value.get("weekly", []), "notes": result["limitations"]})
 
 
 @router.get("/{repository_id}/insights/quality", response_model=SuccessEnvelope[InsightQuality])
-def insight_quality(repository_id: int, request: Request, session: Session = Depends(get_session)):
-    result = repository_insights(session, repository_id)
+def insight_quality(repository_id: int, request: Request, window_days: int = Query(default=90), session: Session = Depends(get_session)):
+    if window_days not in {30, 90, 180}:
+        raise AppError(422, "VALIDATION_ERROR", "分析范围只支持 30、90 或 180 天")
+    result = repository_insights(session, repository_id, window_days=window_days)
     return envelope(request, {key: result[key] for key in ("run_id", "metric_version", "analyzed_at", "sources", "limitations")} | {"metrics": {key: value["quality"] for key, value in result["insights"].items()}})
 
 
 @router.get("/{repository_id}/insights/export.csv")
-def export_insights(repository_id: int, session: Session = Depends(get_session)):
-    result = repository_insights(session, repository_id)
+def export_insights(repository_id: int, window_days: int = Query(default=90), session: Session = Depends(get_session)):
+    if window_days not in {30, 90, 180}:
+        raise AppError(422, "VALIDATION_ERROR", "分析范围只支持 30、90 或 180 天")
+    result = repository_insights(session, repository_id, window_days=window_days)
     output = io.StringIO(newline="")
     writer = csv.writer(output)
     writer.writerow(["repository_id", "run_id", "metric_version", "metric", "unit", "window_start", "window_end", "bucket_start", "bucket_end", "value", "quality", "valid_samples", "source_task_ids"])

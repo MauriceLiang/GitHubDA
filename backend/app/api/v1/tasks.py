@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.api.dependencies import get_session
 from backend.app.api.helpers import envelope, pagination
-from backend.app.core.clock import iso_z, utc_now
+from backend.app.core.clock import iso_z, parse_github_datetime, utc_now
 from backend.app.core.exceptions import AppError
 from backend.app.persistence.db import begin_immediate
 from backend.app.persistence.models import (
@@ -57,6 +57,14 @@ def task_payload(task: CollectionTask, module_progress: list[TaskModuleProgress]
         scope = {}
     window_start = scope.get("window_start") if isinstance(scope, dict) else None
     window_end = scope.get("window_end") if isinstance(scope, dict) else None
+    window_days = scope.get("window_days") if isinstance(scope, dict) else None
+    if not isinstance(window_days, int) or isinstance(window_days, bool):
+        if task.scope_kind in {"quick", "window"}:
+            start = parse_github_datetime(window_start)
+            end = parse_github_datetime(window_end)
+            window_days = max(1, round((end - start).total_seconds() / 86400)) if start is not None and end is not None and start < end else None
+        else:
+            window_days = None
     return {
         "task_id": task.task_id,
         "task_type": "repository_collection",
@@ -68,6 +76,7 @@ def task_payload(task: CollectionTask, module_progress: list[TaskModuleProgress]
         "type": task.type,
         "depth": task.depth,
         "scope_kind": task.scope_kind or "quick",
+        "window_days": window_days,
         "window_start": window_start if isinstance(window_start, str) else None,
         "window_end": window_end if isinstance(window_end, str) else None,
         "status": task.status,

@@ -1,5 +1,5 @@
 import type {
-  AuthorContribution, CommitActivityPage, CommitEvent, ComparisonBundle, ComparisonEntry, Granularity, HistogramResult,
+  AuthorContribution, CommitActivityPage, CommitEvent, ComparisonBundle, ComparisonEntry, Coverage, Granularity, HistogramResult,
   IssueOnlineDetail, IssueRecord, IssueRecordDetail, IssueRecordPage, Metric, PullRequestActivityDetail, PullRequestActivityRecord, PullRequestActivityPage, PullRequestOnlineDetail, PullRequestRecord, ReleaseDetails, ReleaseRecord, RepositoryAnalysis, RepositorySummary,
   ComparisonMode, FeaturedDatasetTaskSummary, ResearchDataset, TaskItem, TimePoint, TimeSeriesResult, TimeWindow,
 } from './types'
@@ -18,6 +18,52 @@ function buckets(seed: RepoSeed, window: TimeWindow) {
   const from = new Date(end).getTime() - window * DAY
   const rows = seed.weeklyCommits.map((value, i) => ({ date: addWeeks(seed.firstWeek, i), value }))
   return rows.filter((r) => new Date(r.date).getTime() >= from)
+}
+
+function windowAvailableDays(seed: RepoSeed) {
+  return seed.coverage.state === 'missing' ? 0 : seed.weeklyCommits.length * 7
+}
+
+function unavailableWindowAnalysis(seed: RepoSeed, window: TimeWindow, availableDays: number): RepositoryAnalysis {
+  const reason = availableDays
+    ? `当前示例数据最多覆盖 ${availableDays} 天，没有覆盖所选的 ${window} 天。`
+    : `当前示例没有可用的活动数据，无法展示所选的 ${window} 天。`
+  const coverage: Coverage = { state: 'missing', label: '范围未覆盖', detail: reason }
+  const windowRange = { start: null, end: null }
+  const emptySeries = (key: string, label: string, unit: string): TimeSeriesResult => ({
+    series: [{ key, label, points: [] }], unit, granularity: 'week', window: windowRange,
+    sampleSize: 0, coverage, collectedAt: null, limitation: reason,
+  })
+  const emptyHistogram: HistogramResult = {
+    unit: '天', buckets: [], percentiles: { p50: null, p75: null, p90: null },
+    sampleSize: 0, coverage, note: reason,
+  }
+  const emptyMetrics = metrics(seed, window)
+  return {
+    repository: summaryOf(seed),
+    metrics: {
+      ...emptyMetrics,
+      metrics: emptyMetrics.metrics.map((item) => ({ ...item, value: null, sampleSize: 0, note: reason })),
+      window: windowRange,
+      collectedAt: null,
+      coverage,
+    },
+    commits: emptySeries('commits', '提交数', '次'),
+    dailyCommits: { ...emptySeries('daily', '每日 Commit 数', '次'), granularity: 'day' },
+    issues: { ...emptySeries('closed', 'Issue 关闭数', '个 Issue'), series: [{ key: 'created', label: '新增', points: [] }, { key: 'closed', label: '关闭', points: [] }] },
+    issueDuration: emptyHistogram,
+    openIssueAges: null,
+    pullRequests: { ...emptySeries('merged', 'PR 合并数', '个 PR'), series: [{ key: 'opened', label: '新建', points: [] }, { key: 'merged', label: '合并', points: [] }] },
+    prDuration: emptyHistogram,
+    longOpenPrs: [],
+    releases: [],
+    releaseIntervals: [],
+    authors: [],
+    coverage,
+    collectedAt: null,
+    observations: [{ id: `window-unavailable-${seed.id}`, text: reason, evidence: '所選分析范围尚未采集' }],
+    windowAvailability: { requestedDays: window, available: false, availableDays, reason },
+  }
 }
 
 function coverageFor(seed: RepoSeed, window: TimeWindow) {
@@ -52,7 +98,15 @@ function dailyPoints(seed: RepoSeed, window: TimeWindow): TimePoint[] {
 }
 
 function weeklyPoints(seed: RepoSeed, window: TimeWindow, factor = 1): TimePoint[] {
-  return buckets(seed, window).map((b) => ({ date: b.date, value: Math.round(b.value * factor) }))
+  const range = windowRange(seed, window)
+  const rangeStart = Date.parse(`${range.start}T00:00:00Z`)
+  const rangeEnd = Date.parse(`${range.end}T00:00:00Z`)
+  return buckets(seed, window).map((b) => ({
+    date: b.date,
+    value: Math.round(b.value * factor),
+    quality: seed.coverage.state === 'complete' ? 'ready' : seed.coverage.state,
+    completeWeek: Date.parse(`${b.date}T00:00:00Z`) >= rangeStart && Date.parse(`${b.date}T00:00:00Z`) + 7 * DAY <= rangeEnd,
+  }))
 }
 
 function timeSeries(
@@ -106,12 +160,13 @@ function histogram(seed: RepoSeed, window: TimeWindow, kind: 'issue' | 'pr'): Hi
 }
 
 function metrics(seed: RepoSeed, window: TimeWindow): RepositoryAnalysis['metrics'] {
-  const commits = buckets(seed, window).reduce((a, c) => a + c.value, 0)
+  const fullWeeks = weeklyPoints(seed, window).filter((point) => point.completeWeek && point.quality === 'ready' && point.value !== null)
+  const commits = fullWeeks.length ? fullWeeks.reduce((sum, point) => sum + (point.value ?? 0), 0) : null
   const authors = seed.authors.filter((a) => !a.isBot && !a.anonymous).length
   const issueSample = Math.round(seed.issueSample * (window === 90 ? 1 : buckets(seed, window).length / Math.max(1, seed.weeklyCommits.length)))
   const prSample = Math.round(seed.prSample * (window === 90 ? 1 : buckets(seed, window).length / Math.max(1, seed.weeklyCommits.length)))
   const list: Metric[] = [
-    { id: 'M01', label: '提交数', value: commits, unit: '次', note: '去重 Commit SHA · 默认分支', sampleSize: commits },
+    { id: 'M01', label: '完整周 Commit 数', value: commits, unit: '次', note: fullWeeks.length ? `去重 Commit SHA · ${fullWeeks.length} 个完整 UTC 自然周` : '所选范围内没有完整 UTC 自然周', sampleSize: commits ?? undefined },
     { id: 'M03', label: '活跃作者', value: seed.authors.length ? authors : null, unit: '人', note: `可识别身份${seed.authors.some((a) => a.anonymous) ? '，另有匿名作者' : ''}` },
     { id: 'M06', label: 'Issue 关闭耗时中位数', value: issueSample ? seed.issueP50 : null, unit: '天', note: `n=${issueSample} · P90 ${(seed.issueP75 * 1.7).toFixed(1)} 天`, sampleSize: issueSample },
     { id: 'M10', label: 'PR 合并耗时中位数', value: prSample ? seed.prP50 : null, unit: '天', note: `n=${prSample} · P90 ${seed.prP90} 天`, sampleSize: prSample },
@@ -212,6 +267,8 @@ const sha = (n: number) => ((n * 2654435761) % 0xfffffff).toString(16).padStart(
 const COMMIT_TITLES = ['feat: 周聚合改为事件日期', 'fix: 排除 PR 类型的 Issue', 'chore: 升级解析依赖', 'docs: 补充指标定义', 'refactor: 统一时间口径', 'test: 增加部分采集用例', 'perf: 聚合查询缓存']
 
 export class MockRepositoryDataSource implements RepositoryDataSource {
+  private requestedScopeTask: TaskItem | null = null
+
   private githubMaxPages = 10
   private featuredImport: { taskId: string; startedAt: number; retryOf: string | null } | null = null
 
@@ -313,7 +370,27 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
     throw new Error('演示模式不支持清除仓库数据')
   }
 
-  async refreshRepository(): Promise<string> { return 'mock-task' }
+  async refreshRepository(id: string, options: { scopeKind: 'quick' | 'window'; windowDays: TimeWindow }): Promise<string> {
+    const seed = repoSeed(id) ?? REPOSITORIES[0]
+    const range = windowRange(seed, options.windowDays)
+    this.requestedScopeTask = {
+      id: `mock-refresh-${Date.now()}`,
+      taskType: 'repository_collection',
+      targetType: 'repository',
+      targetId: id,
+      repositoryId: Number(id) || undefined,
+      repository: seed.fullName,
+      module: 'commits',
+      status: 'queued',
+      stage: '等待 Worker 开始执行',
+      scopeKind: options.scopeKind,
+      windowDays: options.windowDays,
+      windowStart: range.start,
+      windowEnd: range.end,
+      updatedAt: '刚刚',
+    }
+    return this.requestedScopeTask.id
+  }
 
   async listRepositories(): Promise<RepositorySummary[]> {
     return REPOSITORIES.map(summaryOf)
@@ -364,7 +441,10 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
 
   async getAnalysis(id: string, window: TimeWindow, granularity: Granularity): Promise<RepositoryAnalysis> {
     const seed = repoSeed(id) ?? REPOSITORIES[0]
-    const commits = buckets(seed, window).reduce((a, c) => a + c.value, 0)
+    const availableDays = windowAvailableDays(seed)
+    if (availableDays < window) return unavailableWindowAnalysis(seed, window, availableDays)
+    const commits = weeklyPoints(seed, window).filter((point) => point.completeWeek && point.quality === 'ready')
+      .reduce((sum, point) => sum + (point.value ?? 0), 0)
     const prSample = Math.round(seed.prSample * (window === 90 ? 1 : buckets(seed, window).length / Math.max(1, seed.weeklyCommits.length)))
     return {
       repository: summaryOf(seed),
@@ -397,6 +477,7 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
       coverage: coverageFor(seed, window),
       collectedAt: `${seed.lastAnalyzedAt ?? DATASET_END} 02:14 UTC`,
       observations: observationsOf(seed),
+      windowAvailability: { requestedDays: window, available: true, availableDays, reason: null },
     }
   }
 
@@ -741,6 +822,7 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
       { id: 't4', repository: 'demo-labs/empty-lite', module: 'releases', status: 'failed', stage: 'GitHub API 速率限制，已采集 3,200 条后暂停', processed: 3200, total: 6300, updatedAt: '32 分钟前', error: 'GitHub API 速率限制' },
       { id: 't5', repository: 'demo-labs/steady-core', module: 'commits', status: 'done', stage: '已完成', processed: 1304, total: 1304, updatedAt: '今天 02:14' },
       { id: 't6', repository: 'demo-labs/tiny-lab', module: 'issues', status: 'analyzing', stage: '统计分位数 · 3 / 7 条', processed: 3, total: 7, updatedAt: '刚刚' },
+      ...(this.requestedScopeTask ? [this.requestedScopeTask] : []),
       { id: 'mock-featured-failed', taskType: 'dataset_import', targetType: 'dataset', targetId: 'featured-default', repository: '精选仓库数据集', module: 'dataset_import', version: 'featured-v1.0.0-demo', status: 'failed', stage: '演示失败样例：暂存校验未通过', updatedAt: '昨天', error: '演示失败状态，可点击重试', isDemo: true },
       ...(demoImport ? [demoImport] : []),
     ]
@@ -753,7 +835,7 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
     }
     return 'mock-task-retry'
   }
-  async exportInsights(): Promise<Blob> { return new Blob(['demo export'], { type: 'text/csv' }) }
+  async exportInsights(_id: string, _windowDays: TimeWindow): Promise<Blob> { return new Blob(['demo export'], { type: 'text/csv' }) }
   async exportComparison(ids: string[], mode: ComparisonMode): Promise<Blob> {
     const { entries } = await this.getComparison(ids, 90, mode)
     const cells = [

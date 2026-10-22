@@ -71,6 +71,7 @@ def make_task(
     depth: str,
     *,
     scope_kind: str = "quick",
+    window_days: int = 90,
     scope_json: str | None = None,
     retry_of: str | None = None,
     idempotency_key: str | None = None,
@@ -83,13 +84,16 @@ def make_task(
         .order_by(desc(CollectionTask.created_at))
     ).all()
     for existing in active:
-        if (existing.depth == depth and (depth == "basic" or existing.scope_kind == scope_kind)) or (depth == "basic" and existing.depth == "deep"):
+        same_scope = existing.scope_kind == scope_kind
+        same_window = scope_kind not in {"quick", "window"} or _task_window_days(existing) == window_days
+        if (existing.depth == depth and (depth == "basic" or (same_scope and same_window))) or (depth == "basic" and existing.depth == "deep"):
             return existing
     now = utc_now()
     if depth == "deep" and scope_json is None:
         scope_json = json.dumps({
-            "window_start": iso_z(now - timedelta(days=90)),
+            "window_start": iso_z(now - timedelta(days=window_days)),
             "window_end": iso_z(now),
+            "window_days": window_days,
         })
     task = CollectionTask(
         task_id=str(uuid4()), repository_id=repository_id, depth=depth, scope_kind=scope_kind,
@@ -99,6 +103,21 @@ def make_task(
     session.add(task)
     session.flush()
     return task
+
+
+def _task_window_days(task: CollectionTask) -> int:
+    try:
+        scope = json.loads(task.scope_json or "{}")
+    except (TypeError, ValueError):
+        scope = {}
+    days = scope.get("window_days") if isinstance(scope, dict) else None
+    if isinstance(days, int) and not isinstance(days, bool) and days in {30, 90, 180}:
+        return days
+    start = parse_github_datetime(scope.get("window_start")) if isinstance(scope, dict) else None
+    end = parse_github_datetime(scope.get("window_end")) if isinstance(scope, dict) else None
+    if start is not None and end is not None and start < end:
+        return max(1, round((end - start).total_seconds() / 86400))
+    return 90
 
 
 def latest_snapshot(session: Session, repository_id: int) -> RepositorySnapshot | None:
@@ -215,6 +234,7 @@ def enqueue_refresh(
     idempotency_key: str | None,
     force: bool = False,
     scope_kind: str = "quick",
+    window_days: int = 90,
 ) -> dict[str, Any]:
     if session.get(Repository, repository_id) is None:
         raise AppError(404, "RESOURCE_NOT_FOUND", "本地仓库不存在")
@@ -234,7 +254,7 @@ def enqueue_refresh(
                 result = {"task_id": completed.task_id, "reused": True, "status": completed.status}
                 session.commit()
                 return result
-    task = make_task(session, repository_id, depth, scope_kind=scope_kind, idempotency_key=idempotency_key)
+    task = make_task(session, repository_id, depth, scope_kind=scope_kind, window_days=window_days, idempotency_key=idempotency_key)
     result = {"task_id": task.task_id, "reused": task.task_id in existing_ids, "status": task.status}
     session.commit()
     return result

@@ -67,6 +67,7 @@ class RefreshRequest(DTO):
     depth: Literal["basic", "deep"] = "basic"
     force: bool = False
     scope_kind: Literal["quick", "window"] = "quick"
+    window_days: Literal[30, 90, 180] = 90
 
 
 class RefreshResponse(DTO):

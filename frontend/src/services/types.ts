@@ -26,6 +26,16 @@ export interface TimePoint {
   value: number | null
   /** Count observed in this bucket when value is withheld for incomplete coverage. */
   observedValue?: number | null
+  /** Natural-week quality fields are present on backend insight points. */
+  quality?: string
+  completeWeek?: boolean
+}
+
+export interface WindowAvailability {
+  requestedDays: TimeWindow
+  available: boolean
+  availableDays: number | null
+  reason: string | null
 }
 
 export interface NamedSeries {
@@ -287,6 +297,7 @@ export interface RepositoryAnalysis {
   coverage: Coverage
   collectedAt: string | null
   observations: Observation[]
+  windowAvailability: WindowAvailability
 }
 
 export type ComparisonMode = 'same_period' | 'individual_periods'
@@ -375,6 +386,7 @@ export interface TaskItem {
   progressPercent?: number | null
   progressKind?: 'stages' | 'records' | 'indeterminate' | 'unknown'
   scopeKind?: 'quick' | 'window' | 'incremental' | 'backfill' | null
+  windowDays?: number | null
   windowStart?: string | null
   windowEnd?: string | null
   resumeAfter?: string | null
