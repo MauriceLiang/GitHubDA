@@ -1,27 +1,15 @@
 <script setup lang="ts">
-import { FlaskConical, FolderGit2, GitCompareArrows, LayoutDashboard } from 'lucide-vue-next'
-import { computed } from 'vue'
+import { ChartNoAxesCombined, Columns2, Folder, Gauge } from 'lucide-vue-next'
 import { useRoute } from 'vue-router'
-import { useAnalysisStore } from '@/stores/analysis'
-import { useDataSource } from '@/composables/useDataSource'
-import { useAsyncData } from '@/composables/useAsyncData'
 
 const route = useRoute()
-const analysis = useAnalysisStore()
-const { data: repositories } = useAsyncData(() => useDataSource().listRepositories())
 
 const nav = [
-  { key: 'overview', label: '总览', to: '/', icon: LayoutDashboard },
-  { key: 'repositories', label: '仓库', to: '/repositories', icon: FolderGit2 },
-  { key: 'compare', label: '项目比较', to: '/compare', icon: GitCompareArrows },
-  { key: 'research', label: '研究分析', to: '/research', icon: FlaskConical },
+  { key: 'overview', label: '总览', to: '/', icon: Gauge },
+  { key: 'repositories', label: '仓库', to: '/repositories', icon: Folder },
+  { key: 'compare', label: '项目比较', to: '/compare', icon: Columns2 },
+  { key: 'research', label: '研究分析', to: '/research', icon: ChartNoAxesCombined },
 ]
-const recent = computed(() =>
-  analysis.recentIds
-    .map((id) => repositories.value?.find((r) => r.id === id))
-    .filter((r): r is NonNullable<typeof r> => Boolean(r))
-    .slice(0, 3),
-)
 </script>
 
 <template>
@@ -52,32 +40,5 @@ const recent = computed(() =>
         {{ item.label }}
       </RouterLink>
     </nav>
-
-    <div class="mt-6 flex items-center justify-between px-2.5 text-[11.5px] text-muted">
-      <span>最近分析</span>
-      <RouterLink to="/repositories" class="hover:text-ink">全部</RouterLink>
-    </div>
-    <div class="mt-1.5 flex flex-col gap-px">
-      <RouterLink
-        v-for="repo in recent"
-        :key="repo.id"
-        :to="`/repositories/${repo.id}/overview`"
-        class="flex h-8 items-center gap-2 rounded-md px-2.5 text-[12px] transition-colors"
-        :class="route.params.id === repo.id ? 'bg-soft font-medium text-ink' : 'text-muted hover:bg-track hover:text-ink'"
-      >
-        <span class="size-1.5 rounded-full" :class="repo.status === 'partial' ? 'bg-warnfg' : 'bg-ink/70'" />
-        {{ repo.fullName.split('/')[1] }}
-      </RouterLink>
-    </div>
-
-    <div class="mt-auto border-t border-line pt-2.5">
-      <div class="mt-2 flex items-center gap-2.5 px-2.5 py-1.5">
-        <span class="grid size-[26px] place-items-center rounded-full bg-soft text-[10.5px] font-semibold">DA</span>
-        <div class="leading-tight">
-          <b class="block text-[12px] font-medium">本机工作区</b>
-          <span class="text-[10.5px] text-muted">数据来自本地服务</span>
-        </div>
-      </div>
-    </div>
   </aside>
 </template>
