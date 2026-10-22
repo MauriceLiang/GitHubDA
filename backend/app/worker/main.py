@@ -8,8 +8,9 @@ from backend.app.core.config import get_settings
 from backend.app.integrations.github.client import GitHubClient, is_rate_limited_response, retry_after_seconds
 from backend.app.persistence.db import SessionLocal
 from backend.app.persistence.models import ApiRateLimitState, TaskModuleProgress
+from backend.app.worker.dataset_import import execute_dataset_import_job, fail_dataset_import_job
 from backend.app.worker.executor import execute_task
-from backend.app.worker.queue import claim_next_task, heartbeat
+from backend.app.worker.queue import claim_next_dataset_import_job, claim_next_task, heartbeat
 from backend.app.worker.scheduler import start_scheduler
 
 
@@ -50,7 +51,7 @@ def _header_int(value: str | None) -> int | None:
 def main() -> None:
     settings = get_settings()
     worker_id = f"worker-{uuid4()}"
-    active_task: dict[str, str | None] = {"id": None}
+    active_task: dict[str, str | None] = {"id": None, "type": None}
     active_lock = threading.Lock()
     stop = threading.Event()
     scheduler = start_scheduler()
@@ -67,9 +68,10 @@ def main() -> None:
         while not stop.wait(settings.worker_heartbeat_seconds):
             with active_lock:
                 task_id = active_task["id"]
+                task_type = active_task["type"] or "repository_collection"
             session = SessionLocal()
             try:
-                heartbeat(session, worker_id, task_id, settings.worker_lease_seconds)
+                heartbeat(session, worker_id, task_id, settings.worker_lease_seconds, task_type)
             except Exception:
                 session.rollback()
                 logger.exception("Worker heartbeat update failed")
@@ -83,10 +85,35 @@ def main() -> None:
         while True:
             session = SessionLocal()
             try:
+                dataset_job = claim_next_dataset_import_job(session, worker_id, settings.worker_lease_seconds)
+            except Exception:
+                session.rollback()
+                logger.exception("Unable to claim dataset import task")
+                dataset_job = None
+            finally:
+                session.close()
+            if dataset_job is not None:
+                with active_lock:
+                    active_task["id"] = dataset_job.task_id
+                    active_task["type"] = "dataset_import"
+                logger.info("Claimed dataset import task %s for %s", dataset_job.task_id, dataset_job.dataset_id)
+                try:
+                    execute_dataset_import_job(SessionLocal, dataset_job.task_id, worker_id, settings.worker_lease_seconds)
+                except Exception as exc:
+                    logger.exception("Dataset import task %s failed outside executor", dataset_job.task_id)
+                    fail_dataset_import_job(SessionLocal, dataset_job.task_id, worker_id, exc)
+                finally:
+                    with active_lock:
+                        active_task["id"] = None
+                        active_task["type"] = None
+                continue
+
+            session = SessionLocal()
+            try:
                 task = claim_next_task(session, worker_id, settings.worker_lease_seconds)
             except Exception:
                 session.rollback()
-                logger.exception("Unable to claim task")
+                logger.exception("Unable to claim repository task")
                 task = None
             finally:
                 session.close()
@@ -95,6 +122,7 @@ def main() -> None:
                 continue
             with active_lock:
                 active_task["id"] = task.task_id
+                active_task["type"] = "repository_collection"
             logger.info("Claimed task %s for repository %s", task.task_id, task.repository_id)
             try:
                 progress_session = SessionLocal()
@@ -115,6 +143,7 @@ def main() -> None:
             finally:
                 with active_lock:
                     active_task["id"] = None
+                    active_task["type"] = None
     except KeyboardInterrupt:
         logger.info("Worker stopping")
     finally:

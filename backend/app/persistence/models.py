@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.core.clock import utc_now
@@ -54,6 +54,67 @@ class DatasetRepository(Base):
     selection_source: Mapped[str | None] = mapped_column(String(200))
     repository: Mapped[Repository] = relationship(back_populates="memberships")
     dataset: Mapped[Dataset] = relationship(back_populates="memberships")
+
+
+class DatasetImportJob(Base):
+    __tablename__ = "dataset_import_jobs"
+    __table_args__ = (
+        Index("ix_dataset_import_status_created", "status", "created_at"),
+        Index("ix_dataset_import_status_lease", "status", "lease_until"),
+        Index(
+            "uq_dataset_import_active_bundle",
+            "dataset_id",
+            "bundle_hash",
+            unique=True,
+            sqlite_where=text("status IN ('queued', 'running')"),
+            postgresql_where=text("status IN ('queued', 'running')"),
+        ),
+    )
+
+    task_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    dataset_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    bundle_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    bundle_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="queued", nullable=False)
+    phase: Mapped[str | None] = mapped_column(String(20))
+    progress_percent: Mapped[float | None] = mapped_column(Float)
+    progress_kind: Mapped[str] = mapped_column(String(20), default="unknown", nullable=False)
+    processed_records: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_records: Mapped[int | None] = mapped_column(Integer)
+    current_file: Mapped[str | None] = mapped_column(String(200))
+    message: Mapped[str | None] = mapped_column(Text)
+    result_json: Mapped[str | None] = mapped_column(Text)
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    attempt: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    retry_of: Mapped[str | None] = mapped_column(ForeignKey("dataset_import_jobs.task_id"))
+    idempotency_key: Mapped[str | None] = mapped_column(String(200), unique=True)
+    staging_state_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    created_at: Mapped[object] = mapped_column(DateTime, default=utc_now, nullable=False)
+    started_at: Mapped[object | None] = mapped_column(DateTime)
+    heartbeat_at: Mapped[object | None] = mapped_column(DateTime)
+    updated_at: Mapped[object] = mapped_column(DateTime, default=utc_now, nullable=False)
+    finished_at: Mapped[object | None] = mapped_column(DateTime)
+    lease_owner: Mapped[str | None] = mapped_column(String(100))
+    lease_until: Mapped[object | None] = mapped_column(DateTime)
+
+
+class DatasetImportStagingRecord(Base):
+    __tablename__ = "dataset_import_staging_records"
+    __table_args__ = (
+        UniqueConstraint("task_id", "record_type", "record_key", name="uq_dataset_import_staging_key"),
+        Index("ix_dataset_import_staging_task_ordinal", "task_id", "record_type", "ordinal"),
+        Index("ix_dataset_import_staging_repository", "task_id", "record_type", "repository_id", "ordinal"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("dataset_import_jobs.task_id", ondelete="CASCADE"), nullable=False)
+    record_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    record_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    repository_id: Mapped[int | None] = mapped_column(Integer)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[object] = mapped_column(DateTime, default=utc_now, nullable=False)
 
 
 class RepositorySnapshot(Base):

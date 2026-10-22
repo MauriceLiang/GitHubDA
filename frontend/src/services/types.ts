@@ -363,13 +363,18 @@ export type TaskStatus = 'queued' | 'running' | 'analyzing' | 'done' | 'partial'
 export interface TaskItem {
   id: string
   repository: string
+  taskType?: 'repository_collection' | 'dataset_import'
+  targetType?: 'repository' | 'dataset'
+  targetId?: string
+  operation?: string
   repositoryId?: number
   module: string
   status: TaskStatus
   stage: string
+  phase?: string | null
   progressPercent?: number | null
-  progressKind?: 'stages' | 'unknown'
-  scopeKind?: 'quick' | 'window' | 'incremental' | 'backfill'
+  progressKind?: 'stages' | 'records' | 'indeterminate' | 'unknown'
+  scopeKind?: 'quick' | 'window' | 'incremental' | 'backfill' | null
   windowStart?: string | null
   windowEnd?: string | null
   resumeAfter?: string | null
@@ -384,8 +389,38 @@ export interface TaskItem {
   }[]
   processed?: number
   total?: number
+  processedRecords?: number | null
+  totalRecords?: number | null
+  currentFile?: string | null
+  version?: string | null
+  result?: Record<string, unknown> | null
+  retryOf?: string | null
+  isDemo?: boolean
   updatedAt: string
   error?: string
+}
+
+export type DatasetImportTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+
+export interface FeaturedDatasetTaskSummary {
+  taskId: string
+  status: DatasetImportTaskStatus
+  phase: string | null
+  progressPercent: number | null
+  progressKind: 'records' | 'indeterminate' | 'unknown'
+  processedRecords: number
+  totalRecords: number | null
+  currentFile: string | null
+  message: string | null
+  errorCode: string | null
+  errorMessage: string | null
+  createdAt: string | null
+  updatedAt: string | null
+  finishedAt: string | null
+  result: Record<string, unknown> | null
+  retryOf: string | null
+  version: string | null
+  bundleHash: string | null
 }
 
 export interface FeaturedDatasetStatus {
@@ -397,18 +432,23 @@ export interface FeaturedDatasetStatus {
   dataAsOf: string | null
   bundleHash: string | null
   reason: string | null
+  alreadyCurrent: boolean
+  importedVersion: string | null
+  importedBundleHash: string | null
+  importedAt: string | null
+  verificationStatus: 'unknown' | 'pending' | 'verified'
+  activeTask: FeaturedDatasetTaskSummary | null
+  latestTask: FeaturedDatasetTaskSummary | null
+  isDemo?: boolean
 }
 
 export interface FeaturedDatasetImportResult {
+  taskId: string | null
   datasetId: string
   version: string
   bundleHash: string
-  importedCount: number
-  alreadyPresentCount: number
-  snapshotCount: number
-  eventCount: number
-  warningCount: number
-  skippedCount: number
+  status: DatasetImportTaskStatus
+  alreadyCurrent: boolean
 }
 
 export interface CollectionSettings {

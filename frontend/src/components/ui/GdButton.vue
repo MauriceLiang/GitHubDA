@@ -1,12 +1,15 @@
 <script setup lang="ts">
-withDefaults(defineProps<{ variant?: 'primary' | 'outline' | 'ghost'; size?: 'sm' | 'md'; disabled?: boolean }>(), {
-  variant: 'primary', size: 'md', disabled: false,
+import { LoaderCircle } from 'lucide-vue-next'
+
+withDefaults(defineProps<{ variant?: 'primary' | 'outline' | 'ghost'; size?: 'sm' | 'md'; disabled?: boolean; loading?: boolean }>(), {
+  variant: 'primary', size: 'md', disabled: false, loading: false,
 })
 </script>
 
 <template>
   <button
-    :disabled="disabled"
+    :disabled="disabled || loading"
+    :aria-busy="loading"
     class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[7px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45"
     :class="[
       size === 'sm' ? 'h-7 px-2.5 text-[12px]' : 'h-[34px] px-3.5 text-[13px]',
@@ -15,6 +18,7 @@ withDefaults(defineProps<{ variant?: 'primary' | 'outline' | 'ghost'; size?: 'sm
       variant === 'ghost' && 'text-muted hover:bg-track hover:text-ink',
     ]"
   >
+    <LoaderCircle v-if="loading" :size="14" class="shrink-0 animate-spin" aria-hidden="true" />
     <slot />
   </button>
 </template>

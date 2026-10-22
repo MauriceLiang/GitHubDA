@@ -9,8 +9,11 @@ from pathlib import Path
 import pytest
 
 from backend.app.core.exceptions import AppError
+from backend.app.persistence.models import CollectionTask, DatasetImportJob
 from backend.app.services import dataset_import
 from backend.app.services.dataset_import import BundleError, import_featured_bundle, verify_dataset_bundle
+from backend.app.worker.dataset_import import execute_dataset_import_job, fail_dataset_import_job
+from backend.app.worker.queue import claim_next_dataset_import_job
 
 
 HEADERS = {"X-Internal-Api-Key": "test-internal-key"}
@@ -183,8 +186,23 @@ def test_featured_api_reports_missing_real_bundle_without_falling_back_to_github
     assert "尚未生成" in result.json()["data"]["reason"]
 
 
-def test_featured_api_imports_local_bundle_without_github_requests(backend_client, tmp_path, monkeypatch):
-    client, _factory, github = backend_client
+def test_featured_status_does_not_parse_or_hash_all_bundle_records(backend_client, tmp_path, monkeypatch):
+    client, _factory, _github = backend_client
+    root = _write_bundle(tmp_path / "featured-v1")
+    monkeypatch.setattr(dataset_import, "BUNDLE_ROOT", root)
+
+    def unexpected_full_validation(*_args, **_kwargs):
+        raise AssertionError("status must not decompress or fully validate the bundle")
+
+    monkeypatch.setattr(dataset_import, "_load_bundle", unexpected_full_validation)
+    response = client.get("/api/v1/datasets/featured/status", headers=HEADERS)
+    assert response.status_code == 200
+    assert response.json()["data"]["available"] is True
+    assert response.json()["data"]["verification_status"] == "pending"
+
+
+def test_featured_api_queues_local_bundle_and_worker_imports_without_github_requests(backend_client, tmp_path, monkeypatch):
+    client, factory, github = backend_client
     root = _write_bundle(tmp_path / "featured-v1")
     monkeypatch.setattr(dataset_import, "BUNDLE_ROOT", root)
 
@@ -193,14 +211,161 @@ def test_featured_api_imports_local_bundle_without_github_requests(backend_clien
 
     monkeypatch.setattr(github, "get_repository_by_id", unexpected_github_request)
     monkeypatch.setattr("backend.app.pipeline.raw_archive.get_settings", lambda: type("Settings", (), {"raw_data_path": tmp_path / "raw"})())
+    monkeypatch.setattr("backend.app.worker.dataset_import.get_settings", lambda: type("Settings", (), {"raw_data_path": tmp_path / "raw"})())
     response = client.post("/api/v1/datasets/featured/import", headers=HEADERS)
 
-    assert response.status_code == 200
-    assert response.json()["data"]["imported_count"] == 1
-    assert response.json()["data"]["snapshot_count"] == 1
+    assert response.status_code == 202
+    queued = response.json()["data"]
+    assert queued["task_id"]
+    assert queued["status"] == "queued"
+    duplicate = client.post("/api/v1/datasets/featured/import", headers=HEADERS).json()["data"]
+    assert duplicate["task_id"] == queued["task_id"]
+
+    task = client.get(f"/api/v1/tasks/{queued['task_id']}", headers=HEADERS).json()["data"]
+    assert task["task_type"] == "dataset_import"
+    assert task["repository_id"] is None
+    assert task["status"] == "queued"
+    assert task["display_name"] == "精选仓库数据集"
+    task_list = client.get("/api/v1/tasks?task_type=dataset_import&per_page=100", headers=HEADERS).json()
+    assert task_list["meta"]["pagination"]["total"] == 1
+    assert task_list["data"]["items"][0]["task_id"] == queued["task_id"]
+
+    with factory() as session:
+        claimed = claim_next_dataset_import_job(session, "dataset-worker", 60)
+    assert claimed and claimed.task_id == queued["task_id"]
+    execute_dataset_import_job(factory, claimed.task_id, "dataset-worker", 60)
+
+    task = client.get(f"/api/v1/tasks/{queued['task_id']}", headers=HEADERS).json()["data"]
+    assert task["status"] == "succeeded"
+    assert task["progress_percent"] == 100
+    assert task["result"]["imported_count"] == 1
+    assert task["result"]["snapshot_count"] == 1
     status = client.get("/api/v1/datasets/featured/status", headers=HEADERS)
     assert status.status_code == 200
     assert status.json()["data"]["imported_repositories"] == 1
+    assert status.json()["data"]["already_current"] is True
+    already_current = client.post("/api/v1/datasets/featured/import", headers=HEADERS)
+    assert already_current.status_code == 200
+    assert already_current.json()["data"]["already_current"] is True
+
+
+def test_dataset_import_failure_rolls_back_business_rows_and_can_be_retried(backend_client, tmp_path, monkeypatch):
+    client, factory, _github = backend_client
+    root = _write_bundle(tmp_path / "featured-v1")
+    monkeypatch.setattr(dataset_import, "BUNDLE_ROOT", root)
+    monkeypatch.setattr("backend.app.pipeline.raw_archive.get_settings", lambda: type("Settings", (), {"raw_data_path": tmp_path / "raw"})())
+    monkeypatch.setattr("backend.app.worker.dataset_import.get_settings", lambda: type("Settings", (), {"raw_data_path": tmp_path / "raw"})())
+    with factory() as session:
+        session.add(dataset_import.Repository(
+            repository_id=87654321,
+            full_name="conflict/repository",
+            html_url="https://github.com/conflict/repository",
+            first_seen_at=datetime(2026, 10, 20),
+            last_seen_at=datetime(2026, 10, 20),
+        ))
+        session.commit()
+
+    queued = client.post("/api/v1/datasets/featured/import", headers=HEADERS).json()["data"]
+    with factory() as session:
+        claimed = claim_next_dataset_import_job(session, "dataset-worker", 60)
+    with pytest.raises(AppError, match="仓库身份与本地记录冲突"):
+        execute_dataset_import_job(factory, claimed.task_id, "dataset-worker", 60)
+    fail_dataset_import_job(factory, claimed.task_id, "dataset-worker", AppError(409, "DATASET_REPOSITORY_CONFLICT", "仓库身份与本地记录冲突"))
+
+    with factory() as session:
+        failed = session.get(DatasetImportJob, queued["task_id"])
+        assert failed.status == "failed"
+        assert failed.error_code == "DATASET_REPOSITORY_CONFLICT"
+        featured = session.get(dataset_import.Dataset, dataset_import.FEATURED_ID)
+        assert featured is not None and featured.source_metadata_json is None
+        assert session.scalar(dataset_import.select(dataset_import.func.count()).select_from(dataset_import.DatasetRepository).where(dataset_import.DatasetRepository.dataset_id == dataset_import.FEATURED_ID)) == 0
+        assert session.scalar(dataset_import.select(dataset_import.func.count()).select_from(dataset_import.DatasetImportStagingRecord).where(dataset_import.DatasetImportStagingRecord.task_id == queued["task_id"])) > 0
+
+    retry = client.post(f"/api/v1/tasks/{queued['task_id']}/retry", headers={**HEADERS, "Idempotency-Key": "retry-featured-once"})
+    assert retry.status_code == 202
+    retry_task_id = retry.json()["data"]["task_id"]
+    with factory() as session:
+        assert session.get(DatasetImportJob, queued["task_id"]).status == "failed"
+        retried = session.get(DatasetImportJob, retry_task_id)
+        assert retried.status == "queued"
+        assert retried.retry_of == queued["task_id"]
+        assert retried.processed_records > 0
+        assert session.scalar(dataset_import.select(dataset_import.func.count()).select_from(dataset_import.DatasetImportStagingRecord).where(dataset_import.DatasetImportStagingRecord.task_id == retry_task_id)) > 0
+
+
+def test_dataset_import_cleans_published_archives_after_merge_failure(backend_client, tmp_path, monkeypatch):
+    client, factory, _github = backend_client
+    root = _write_bundle(tmp_path / "featured-v1")
+    _write_jsonl_gzip(root / "insights.jsonl.gz", [{
+        "repository_id": 87654321,
+        "metric_version": "insights-v1",
+        "analyzed_at": "2026-10-20T00:00:00Z",
+        "window_start": "2026-07-22T00:00:00Z",
+        "window_end": "2026-10-20T00:00:00Z",
+        "sources": {},
+        "result": {},
+        "status": "ready",
+        "limitations": [],
+    }])
+    _refresh_checksums(root)
+    monkeypatch.setattr(dataset_import, "BUNDLE_ROOT", root)
+    raw_root = tmp_path / "raw"
+    settings = lambda: type("Settings", (), {"raw_data_path": raw_root})()
+    monkeypatch.setattr("backend.app.pipeline.raw_archive.get_settings", settings)
+    monkeypatch.setattr("backend.app.worker.dataset_import.get_settings", settings)
+
+    task_id = client.post("/api/v1/datasets/featured/import", headers=HEADERS).json()["data"]["task_id"]
+    with factory() as session:
+        claimed = claim_next_dataset_import_job(session, "dataset-worker", 60)
+    monkeypatch.setattr(dataset_import, "_import_records", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("simulated merge failure")))
+    with pytest.raises(RuntimeError, match="simulated merge failure"):
+        execute_dataset_import_job(factory, task_id, "dataset-worker", 60)
+    fail_dataset_import_job(factory, task_id, "dataset-worker", RuntimeError("simulated merge failure"))
+
+    with factory() as session:
+        job = session.get(DatasetImportJob, task_id)
+        state = json.loads(job.staging_state_json)
+        archive_paths = list(state["archive_paths"].values())
+        assert job.status == "failed"
+    assert archive_paths
+    assert all(not (raw_root / path).exists() for path in archive_paths)
+    assert not (raw_root / ".dataset-import-staging" / task_id).exists()
+
+
+def test_tasks_merge_pagination_and_filters_across_task_types(backend_client):
+    client, factory, _github = backend_client
+    added = client.post("/api/v1/library/repositories", json={"full_name": "example/project", "auto_analyze": False}, headers=HEADERS).json()["data"]
+    with factory() as session:
+        session.add(CollectionTask(
+            task_id="collection-older",
+            repository_id=added["repository_id"],
+            depth="basic",
+            status="queued",
+            created_at=datetime(2026, 10, 20, 10),
+        ))
+        session.add(DatasetImportJob(
+            task_id="dataset-newer",
+            dataset_id=dataset_import.FEATURED_ID,
+            bundle_version="featured-test",
+            bundle_hash="b" * 64,
+            status="queued",
+            phase="validating",
+            progress_kind="indeterminate",
+            created_at=datetime(2026, 10, 20, 11),
+            updated_at=datetime(2026, 10, 20, 11),
+        ))
+        session.commit()
+
+    first_page = client.get("/api/v1/tasks?page=1&per_page=1", headers=HEADERS).json()
+    assert first_page["meta"]["pagination"]["total"] == 2
+    assert first_page["meta"]["pagination"]["has_next"] is True
+    assert first_page["data"]["items"][0]["task_type"] == "dataset_import"
+    second_page = client.get("/api/v1/tasks?page=2&per_page=1", headers=HEADERS).json()
+    assert second_page["data"]["items"][0]["task_type"] == "repository_collection"
+    by_repository = client.get(f"/api/v1/tasks?repository_id={added['repository_id']}", headers=HEADERS).json()
+    assert by_repository["meta"]["pagination"]["total"] == 1
+    by_type = client.get("/api/v1/tasks?task_type=dataset_import", headers=HEADERS).json()
+    assert by_type["meta"]["pagination"]["total"] == 1
 
 
 def test_featured_api_exports_verified_local_zip_without_github_requests(backend_client, tmp_path, monkeypatch):

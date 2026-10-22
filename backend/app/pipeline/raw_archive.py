@@ -3,17 +3,25 @@ import json
 import os
 import tempfile
 import zlib
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
 from backend.app.core.config import get_settings
 
 
-def archive_json(repository_id: int, task_id: str, kind: str, value: Any) -> str:
-    root = get_settings().raw_data_path
-    date = datetime.now(UTC).strftime("%Y-%m-%d")
-    relative = Path(str(repository_id)) / date / task_id / f"{kind}.json.gz"
+def archive_json(
+    repository_id: int,
+    task_id: str,
+    kind: str,
+    value: Any,
+    *,
+    root: Path | None = None,
+    archive_date: date | None = None,
+) -> str:
+    root = (root or get_settings().raw_data_path).resolve()
+    day = (archive_date or datetime.now(UTC).date()).strftime("%Y-%m-%d")
+    relative = Path(str(repository_id)) / day / task_id / f"{kind}.json.gz"
     target = (root / relative).resolve()
     if not target.is_relative_to(root):
         raise ValueError("archive path escapes configured raw data directory")

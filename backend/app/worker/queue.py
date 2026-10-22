@@ -1,10 +1,12 @@
 from datetime import timedelta
+import json
 
 from sqlalchemy import case, delete, select, text
 from sqlalchemy.orm import Session
 
 from backend.app.core.clock import utc_now
-from backend.app.persistence.models import ApiRateLimitState, CollectionTask, TaskModuleProgress
+from backend.app.persistence.models import ApiRateLimitState, CollectionTask, DatasetImportJob, TaskModuleProgress
+from backend.app.worker.dataset_import import cleanup_dataset_import_artifacts
 from backend.app.worker.progress import initialize_attempt_progress
 
 
@@ -71,7 +73,12 @@ def claim_next_task(session: Session, worker_id: str, lease_seconds: int) -> Col
             CollectionTask.lease_until >= now,
         ).limit(1)
     )
-    if active:
+    active_dataset_import = session.scalar(
+        select(DatasetImportJob.task_id).where(
+            DatasetImportJob.status == "running",
+        ).limit(1)
+    )
+    if active or active_dataset_import:
         session.commit()
         return None
 
@@ -109,7 +116,93 @@ def claim_next_task(session: Session, worker_id: str, lease_seconds: int) -> Col
     return task
 
 
-def heartbeat(session: Session, worker_id: str, active_task_id: str | None, lease_seconds: int) -> None:
+def claim_next_dataset_import_job(session: Session, worker_id: str, lease_seconds: int) -> DatasetImportJob | None:
+    session.execute(text("BEGIN IMMEDIATE"))
+    now = utc_now()
+    stale = session.scalars(
+        select(DatasetImportJob).where(
+            DatasetImportJob.status == "running",
+            (DatasetImportJob.lease_until.is_(None) | (DatasetImportJob.lease_until < now)),
+        )
+    ).all()
+    terminal_cleanup: list[tuple[str, dict]] = []
+    for job in stale:
+        job.lease_owner = None
+        job.lease_until = None
+        job.heartbeat_at = now
+        job.updated_at = now
+        if job.attempt >= MAX_ATTEMPTS:
+            job.status = "failed"
+            job.finished_at = now
+            job.phase = None
+            job.progress_kind = "unknown"
+            job.progress_percent = None
+            job.error_code = "WORKER_LEASE_EXPIRED"
+            job.error_message = "Worker 租约过期且已达到最大尝试次数"
+            job.message = job.error_message
+            try:
+                state = json.loads(job.staging_state_json or "{}")
+            except (TypeError, ValueError):
+                state = {}
+            terminal_cleanup.append((job.task_id, state if isinstance(state, dict) else {}))
+        else:
+            job.status = "queued"
+            job.message = "Worker 重启后从已暂存记录继续"
+
+    active_collection = session.scalar(
+        select(CollectionTask.task_id).where(
+            CollectionTask.status == "running",
+        ).limit(1)
+    )
+    active_dataset = session.scalar(
+        select(DatasetImportJob.task_id).where(
+            DatasetImportJob.status == "running",
+            DatasetImportJob.lease_until.is_not(None),
+            DatasetImportJob.lease_until >= now,
+        ).limit(1)
+    )
+    if active_collection or active_dataset:
+        session.commit()
+        for task_id, state in terminal_cleanup:
+            cleanup_dataset_import_artifacts(task_id, state)
+        return None
+
+    job = session.scalar(
+        select(DatasetImportJob)
+        .where(DatasetImportJob.status == "queued")
+        .order_by(DatasetImportJob.created_at)
+        .limit(1)
+    )
+    if job is None:
+        session.commit()
+        for task_id, state in terminal_cleanup:
+            cleanup_dataset_import_artifacts(task_id, state)
+        return None
+    job.status = "running"
+    job.phase = job.phase or "validating"
+    job.progress_kind = "indeterminate" if job.phase in {"validating", "importing", "finalizing"} else "records"
+    job.progress_percent = None if job.progress_kind == "indeterminate" else job.progress_percent
+    job.attempt += 1
+    job.started_at = job.started_at or now
+    job.heartbeat_at = now
+    job.updated_at = now
+    job.lease_owner = worker_id
+    job.lease_until = now + timedelta(seconds=lease_seconds)
+    job.message = "正在校验精选数据包" if job.phase == "validating" else job.message or "正在恢复精选数据导入"
+    session.commit()
+    session.refresh(job)
+    for task_id, state in terminal_cleanup:
+        cleanup_dataset_import_artifacts(task_id, state)
+    return job
+
+
+def heartbeat(
+    session: Session,
+    worker_id: str,
+    active_task_id: str | None,
+    lease_seconds: int,
+    active_task_type: str = "repository_collection",
+) -> None:
     from backend.app.persistence.models import WorkerStatus
 
     now = utc_now()
@@ -119,10 +212,12 @@ def heartbeat(session: Session, worker_id: str, active_task_id: str | None, leas
         session.add(row)
     row.last_heartbeat_at = now
     if active_task_id:
-        task = session.get(CollectionTask, active_task_id)
+        task = session.get(DatasetImportJob if active_task_type == "dataset_import" else CollectionTask, active_task_id)
         if task and task.status == "running" and task.lease_owner == worker_id:
             task.heartbeat_at = now
             task.lease_until = now + timedelta(seconds=lease_seconds)
+            if isinstance(task, DatasetImportJob):
+                task.updated_at = now
     session.commit()
 
 

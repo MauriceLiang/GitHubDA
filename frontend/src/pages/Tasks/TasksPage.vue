@@ -67,14 +67,27 @@ async function retry(task: TaskItem) {
 }
 
 function view(task: TaskItem) {
-  if (task.repositoryId) void router.push(`/repositories/${task.repositoryId}/overview`)
+  if (task.taskType === 'dataset_import') void router.push('/repositories')
+  else if (task.repositoryId) void router.push(`/repositories/${task.repositoryId}/overview`)
 }
 
 function percent(task: TaskItem): number | null {
-  return task.progressKind === 'stages' ? task.progressPercent ?? null : null
+  return task.progressKind === 'stages' || task.progressKind === 'records' ? task.progressPercent ?? null : null
 }
 
 function taskDetail(task: TaskItem): string {
+  if (task.taskType === 'dataset_import') {
+    if (task.processedRecords !== null && task.processedRecords !== undefined && task.totalRecords !== null && task.totalRecords !== undefined) {
+      return `${task.processedRecords.toLocaleString('en-US')} / ${task.totalRecords.toLocaleString('en-US')} 条记录${task.currentFile ? ` · ${task.currentFile}` : ''}`
+    }
+    if (task.status === 'done' && task.result) {
+      const imported = Number(task.result.imported_count ?? 0)
+      const events = Number(task.result.event_count ?? 0)
+      const skipped = Number(task.result.skipped_count ?? 0)
+      return `新增 ${imported.toLocaleString('en-US')} 个仓库 · 活动记录 ${events.toLocaleString('en-US')} 条 · 跳过 ${skipped.toLocaleString('en-US')} 条${task.version ? ` · ${task.version}` : ''}`
+    }
+    return task.version ? `数据集导入 · ${task.version}` : '数据集导入'
+  }
   const active = task.modules?.find((module) => module.status === 'running')
   if (active) return `${active.pagesFetched} 页 · ${active.observedItems.toLocaleString('en-US')} 条${active.pageCap ? ` / ${active.pageCap} 页预算` : ''}`
   if (task.resumeAfter) return `限流暂停 · 预计 ${new Date(task.resumeAfter).toLocaleString() } 恢复`
@@ -90,7 +103,7 @@ function taskDetail(task: TaskItem): string {
   <div class="flex flex-col gap-[18px] px-7 pb-8 pt-[22px]">
     <div>
       <h1 class="m-0 text-[24px] font-semibold">任务</h1>
-      <p class="mt-1.5 text-muted">任务由后端 Worker 执行；页面仅显示服务端返回的阶段与状态。</p>
+      <p class="mt-1.5 text-muted">仓库采集与精选数据导入均由后端 Worker 执行；进度只反映实际任务阶段，不代表历史覆盖率。</p>
     </div>
 
     <section class="grid grid-cols-2 divide-line rounded-[10px] border border-line bg-panel px-5 py-3.5 sm:grid-cols-4 sm:divide-x">
@@ -103,8 +116,8 @@ function taskDetail(task: TaskItem): string {
     <GdCard class="h-[520px] overflow-hidden">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 class="m-0 text-[15.5px] font-semibold">采集任务</h3>
-          <p class="mt-0.5 text-[12px] text-muted">阶段进度不代表历史数据覆盖率；未知进度保持空缺。</p>
+          <h3 class="m-0 text-[15.5px] font-semibold">任务记录</h3>
+          <p class="mt-0.5 text-[12px] text-muted">任务进度来自服务端阶段或实际暂存记录数；未知进度不填充百分比。</p>
         </div>
         <GdButton variant="outline" size="sm" :disabled="loading" @click="refresh">刷新</GdButton>
       </div>
@@ -113,32 +126,38 @@ function taskDetail(task: TaskItem): string {
       <div v-else-if="loading" class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <div v-for="i in 4" :key="i" class="h-16 animate-pulse rounded bg-track/60" />
       </div>
-      <div v-else-if="!tasks.length" class="min-h-0 flex-1 overflow-y-auto overscroll-contain py-10 text-center text-[12px] text-muted">当前没有采集任务。可以从总览输入仓库并开始分析。</div>
+      <div v-else-if="!tasks.length" class="min-h-0 flex-1 overflow-y-auto overscroll-contain py-10 text-center text-[12px] text-muted">当前没有任务。可以从仓库页添加仓库或导入精选数据。</div>
 
       <template v-else>
         <div class="hidden grid-cols-[minmax(190px,1.6fr)_96px_92px_minmax(280px,1.8fr)_64px_92px] items-center gap-4 border-b border-line px-1 pb-2 text-[11.5px] text-muted lg:grid">
-          <span>仓库 / 阶段</span><span>状态</span><span>更新时间</span><span>当前阶段</span><span class="text-right">进度</span><span />
+          <span>任务 / 类型</span><span>状态</span><span>更新时间</span><span>当前阶段</span><span class="text-right">进度</span><span />
         </div>
         <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
           <div class="divide-y divide-line">
             <div v-for="task in tasks" :key="task.id" class="grid grid-cols-1 items-center gap-3 py-3 lg:grid-cols-[minmax(190px,1.6fr)_96px_92px_minmax(280px,1.8fr)_64px_92px] lg:gap-4">
               <div class="min-w-0">
                 <div class="truncate text-[13px] font-semibold">{{ task.repository }}</div>
-                <div class="text-[11.5px] text-muted">{{ moduleLabel[task.module] ?? task.module }}</div>
+                <div class="text-[11.5px] text-muted">
+                  {{ task.taskType === 'dataset_import' ? `数据集导入${task.version ? ` · ${task.version}` : ''}` : moduleLabel[task.module] ?? task.module }}
+                  <span v-if="task.isDemo" class="ml-1 text-s1">· 演示任务</span>
+                </div>
                 <div v-if="taskDetail(task)" class="mt-0.5 truncate text-[10.5px] text-muted" :title="taskDetail(task)">{{ taskDetail(task) }}</div>
               </div>
-              <div><GdBadge :variant="statusMeta[task.status].variant">{{ statusMeta[task.status].text }}</GdBadge></div>
+              <div><GdBadge :variant="statusMeta[task.status].variant">{{ task.taskType === 'dataset_import' && (task.status === 'running' || task.status === 'analyzing') ? '正在导入' : statusMeta[task.status].text }}</GdBadge></div>
               <div class="text-[11.5px] text-muted">{{ task.updatedAt }}</div>
               <div class="min-w-0">
                 <div class="truncate text-[11.5px] text-muted" :title="task.stage">{{ task.error ?? task.stage }}</div>
                 <div v-if="percent(task) !== null" class="mt-1.5 h-1 overflow-hidden rounded bg-track">
                   <div class="h-full rounded bg-ink transition-[width] duration-500" :style="{ width: `${percent(task)}%` }" />
                 </div>
+                <div v-else-if="task.progressKind === 'indeterminate' && (task.status === 'running' || task.status === 'analyzing')" class="mt-1.5 h-1 overflow-hidden rounded bg-track">
+                  <div class="h-full w-1/3 animate-pulse rounded bg-ink" />
+                </div>
               </div>
               <div class="text-right font-mono text-[11.5px] text-muted">{{ percent(task) === null ? '—' : `${Math.round(percent(task)!)}%` }}</div>
               <div class="flex justify-start lg:justify-end">
                 <GdButton v-if="task.status === 'failed' || task.status === 'partial'" variant="outline" size="sm" class="min-w-[78px]" :disabled="retrying === task.id" @click="retry(task)">{{ retrying === task.id ? '排队中…' : '重试' }}</GdButton>
-                <GdButton v-else variant="ghost" size="sm" class="min-w-[78px]" @click="view(task)">查看仓库</GdButton>
+                <GdButton v-else variant="ghost" size="sm" class="min-w-[78px]" @click="view(task)">{{ task.taskType === 'dataset_import' ? task.status === 'done' ? '查看结果' : '查看进度' : '查看仓库' }}</GdButton>
               </div>
             </div>
           </div>

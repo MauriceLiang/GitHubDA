@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ArrowRight, Download, Search } from 'lucide-vue-next'
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import GdBadge from '@/components/ui/GdBadge.vue'
 import GdButton from '@/components/ui/GdButton.vue'
@@ -31,8 +31,31 @@ const { data: featuredData, error: featuredStatusError, reload: reloadFeaturedSt
 const featuredStatus = ref<FeaturedDatasetStatus | null>(null)
 const importingFeatured = ref(false)
 const exportingFeatured = ref(false)
+let featuredStatusPollTimer: number | undefined
 
-watch(featuredData, (value) => { if (value) featuredStatus.value = value }, { immediate: true })
+watch(featuredData, (value) => {
+  if (!value) return
+  const previousActive = featuredStatus.value?.activeTask
+  featuredStatus.value = value
+  const completed = value.latestTask?.taskId === previousActive?.taskId ? value.latestTask : null
+  if (completed?.status === 'succeeded') {
+    void reload()
+    const imported = Number(completed.result?.imported_count ?? 0)
+    const events = Number(completed.result?.event_count ?? 0)
+    ui.toast(`精选数据导入完成：新增 ${imported.toLocaleString('zh-CN')} 个仓库，活动记录 ${events.toLocaleString('zh-CN')} 条`)
+  } else if (completed?.status === 'failed') {
+    ui.toast(completed.errorMessage ?? '精选数据导入失败，可在此重试')
+  }
+}, { immediate: true })
+
+onMounted(() => {
+  featuredStatusPollTimer = window.setInterval(() => {
+    if (featuredStatus.value?.activeTask) void reloadFeaturedStatus()
+  }, 3000)
+})
+onBeforeUnmount(() => {
+  if (featuredStatusPollTimer !== undefined) window.clearInterval(featuredStatusPollTimer)
+})
 
 watch(tab, () => { searchError.value = null })
 
@@ -113,13 +136,44 @@ async function importFeatured() {
   importingFeatured.value = true
   try {
     const result = await source.importFeaturedDataset()
-    await Promise.all([reload(), reloadFeaturedStatus()])
-    ui.toast(`精选仓库导入完成：新增 ${result.importedCount} 个，已存在 ${result.alreadyPresentCount} 个；快照 ${result.snapshotCount} 份、活动记录 ${result.eventCount} 条${result.warningCount ? `，${result.warningCount} 项数据提示` : ''}`)
+    await reloadFeaturedStatus()
+    if (result.alreadyCurrent) ui.toast('精选数据包当前版本已导入')
+    else ui.toast('精选数据导入任务已排队，可在任务中心查看进度')
   } catch (cause) {
     ui.toast(cause instanceof Error ? cause.message : '导入精选仓库失败')
   } finally {
     importingFeatured.value = false
   }
+}
+
+async function handleFeaturedImport() {
+  const latest = featuredStatus.value?.latestTask
+  if (latest?.status === 'failed' && latest.bundleHash === featuredStatus.value?.bundleHash && !featuredStatus.value?.alreadyCurrent) {
+    importingFeatured.value = true
+    try {
+      await source.retryTask(latest.taskId)
+      await reloadFeaturedStatus()
+      ui.toast('精选数据导入已重新排队')
+    } catch (cause) {
+      ui.toast(cause instanceof Error ? cause.message : '重试精选数据导入失败')
+    } finally {
+      importingFeatured.value = false
+    }
+    return
+  }
+  await importFeatured()
+}
+
+function featuredImportLabel(): string {
+  if (importingFeatured.value) return '正在排队…'
+  const active = featuredStatus.value?.activeTask
+  if (active?.status === 'queued') return '等待导入 Worker'
+  if (active?.phase === 'validating') return '正在校验数据包'
+  if (active?.phase === 'staging') return `准备导入数据${active.progressPercent === null ? '' : ` · ${Math.round(active.progressPercent)}%`}`
+  if (active?.phase === 'importing' || active?.phase === 'finalizing') return '正在写入本地分析库'
+  if (featuredStatus.value?.alreadyCurrent) return '已导入当前版本'
+  if (featuredStatus.value?.latestTask?.status === 'failed' && featuredStatus.value.latestTask.bundleHash === featuredStatus.value.bundleHash) return '重试导入'
+  return '导入精选仓库'
 }
 
 async function exportFeatured() {
@@ -146,14 +200,33 @@ async function exportFeatured() {
       </div>
       <div class="flex flex-col items-end gap-1">
         <div class="flex items-center gap-1.5">
-          <GdButton variant="outline" size="sm" :disabled="!featuredStatus?.available || importingFeatured" :title="featuredStatus?.reason ?? undefined" @click="importFeatured">
-            {{ importingFeatured ? '正在导入…' : '导入精选仓库' }}
+          <GdButton
+            variant="outline"
+            size="sm"
+            :loading="importingFeatured || Boolean(featuredStatus?.activeTask)"
+            :disabled="!featuredStatus?.available || Boolean(featuredStatus?.activeTask) || Boolean(featuredStatus?.alreadyCurrent)"
+            :title="featuredStatus?.reason ?? undefined"
+            @click="handleFeaturedImport"
+          >
+            {{ featuredImportLabel() }}
           </GdButton>
           <GdButton variant="ghost" size="sm" :disabled="!featuredStatus?.available || exportingFeatured" @click="exportFeatured">
             <Download :size="13" />{{ exportingFeatured ? '准备下载…' : '下载数据包' }}
           </GdButton>
         </div>
-        <span v-if="featuredStatus?.available" class="text-[10.5px] text-muted">{{ featuredStatus.importedRepositories }}/{{ featuredStatus.totalRepositories }} 已导入 · {{ featuredStatus.version }}</span>
+        <span v-if="featuredStatus?.activeTask" class="text-right text-[10.5px] text-muted">
+          {{ featuredStatus.activeTask.message ?? '正在导入精选数据' }}
+          <template v-if="featuredStatus.activeTask.progressKind === 'records' && featuredStatus.activeTask.totalRecords">
+            · {{ featuredStatus.activeTask.processedRecords.toLocaleString('zh-CN') }}/{{ featuredStatus.activeTask.totalRecords.toLocaleString('zh-CN') }} 条
+          </template>
+        </span>
+        <span v-else-if="featuredStatus?.latestTask?.status === 'failed' && featuredStatus.latestTask.bundleHash === featuredStatus.bundleHash && !featuredStatus.alreadyCurrent" class="max-w-[420px] text-right text-[10.5px] text-danger">
+          {{ featuredStatus.latestTask.errorMessage ?? '上次导入失败，可重试' }}
+        </span>
+        <span v-else-if="featuredStatus?.available" class="text-[10.5px] text-muted">
+          {{ featuredStatus.importedRepositories }}/{{ featuredStatus.totalRepositories }} 已导入 · {{ featuredStatus.version }}
+          <span v-if="featuredStatus.isDemo"> · 演示状态</span>
+        </span>
         <span v-else class="max-w-[360px] text-right text-[10.5px] text-muted">{{ featuredStatusError ?? featuredStatus?.reason ?? '正在读取内置数据包状态…' }}</span>
       </div>
     </div>
