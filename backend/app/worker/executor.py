@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from backend.app.core.clock import iso_z, utc_now
+from backend.app.core.clock import iso_z, parse_github_datetime, utc_now
 from backend.app.core.exceptions import AppError
 from backend.app.integrations.github.client import GitHubClient, PageObservation, PaginatedResult
 from backend.app.persistence.db import begin_immediate
@@ -17,7 +17,8 @@ from backend.app.pipeline.quality import overall_coverage
 from backend.app.pipeline.raw_archive import archive_json
 from backend.app.services.insights import PAGE_LIMIT_NOTE, persist_insights
 from backend.app.services.repositories import latest_analysis, latest_snapshot, repository_from_github
-from backend.app.worker.queue import update_phase
+from backend.app.worker.collection import collect_deep
+from backend.app.worker.queue import MAX_ATTEMPTS, update_phase
 from backend.app.worker.progress import TaskProgressReporter
 from backend.app.worker.telemetry import log_module_timing, log_page_progress, log_task_timing, request_metrics_delta
 
@@ -196,11 +197,19 @@ def execute_task(session_factory, task_id: str, github: GitHubClient) -> None:
             if reporter:
                 reporter.finish_module(
                     "profile",
-                    status="failed",
-                    coverage="partial",
+                    status="skipped" if exc.code == "GITHUB_RATE_LIMITED" else "failed",
+                    coverage="deferred" if exc.code == "GITHUB_RATE_LIMITED" else "partial",
                     elapsed_seconds=time.monotonic() - profile_started,
                     error_code=exc.code,
                 )
+            if exc.code == "GITHUB_RATE_LIMITED":
+                retry_after = exc.details.get("retry_after_seconds")
+                delay = retry_after if isinstance(retry_after, int) and retry_after > 0 else min(3600, 60 * (2 ** min(max(task.attempt - 1, 0), 5)))
+                resume_after = utc_now() + timedelta(seconds=delay)
+                final_status = _defer_rate_limited(session, task_id, expected_attempt, expected_owner, resume_after)
+                if final_status:
+                    _log_task_timing(github, task_id, repository_id, depth, final_status, task_started, initial_metrics)
+                return
             if _finish_failed(session, task_id, exc.code, exc.message, expected_attempt, expected_owner, details=exc.details):
                 _log_task_timing(github, task_id, repository_id, depth, "failed", task_started, initial_metrics)
             return
@@ -237,10 +246,40 @@ def execute_task(session_factory, task_id: str, github: GitHubClient) -> None:
         insight_result = None
         window_end = collected_at.replace(microsecond=0)
         window_start = window_end - timedelta(days=90)
+        deferred_until = None
+        query_start = window_start
+        if task.depth == "deep":
+            window_end = task.created_at.replace(microsecond=0)
+            window_start = window_end - timedelta(days=90)
+            query_start = window_start
+        if task.depth == "deep" and task.scope_json:
+            try:
+                task_scope = json.loads(task.scope_json)
+                scoped_start = parse_github_datetime(task_scope.get("window_start")) if isinstance(task_scope, dict) else None
+                scoped_end = parse_github_datetime(task_scope.get("window_end")) if isinstance(task_scope, dict) else None
+                if scoped_start and scoped_end and scoped_start < scoped_end:
+                    if task.scope_kind in {"incremental", "backfill"}:
+                        query_start = scoped_start
+                        analysis_start = parse_github_datetime(task_scope.get("analysis_window_start"))
+                        analysis_end = parse_github_datetime(task_scope.get("analysis_window_end"))
+                        if analysis_start and analysis_end and analysis_start < analysis_end:
+                            window_start, window_end = analysis_start, analysis_end
+                    else:
+                        window_start, window_end = scoped_start, scoped_end
+                        query_start = scoped_start
+            except (TypeError, ValueError):
+                logger.warning("Invalid saved collection scope task_id=%s; using task creation window", task.task_id)
+                window_end = task.created_at.replace(microsecond=0)
+                window_start = window_end - timedelta(days=90)
+                query_start = window_start
         if task.depth == "deep":
             if reporter:
-                reporter.set_phase("collecting", "正在采集有限时间窗的深度活动数据", 12)
-            activity, depth_coverage = _collect_deep(github, cleaned["full_name"], window_start, window_end, task, reporter)
+                collection_label = "历史回填" if task.scope_kind == "backfill" else "重叠增量窗口" if task.scope_kind == "incremental" else "完整时间窗" if task.scope_kind == "window" else "快速预算"
+                reporter.set_phase("collecting", f"正在采集{collection_label}深度活动数据", 12)
+            activity, depth_coverage, deferred_until = collect_deep(
+                github, cleaned["full_name"], window_start, window_end, task, reporter, session_factory,
+                query_start=query_start,
+            )
             for metric, key in (("commits_90d", "commits_count"), ("issues_closed_90d", "issues_closed_count"), ("pr_merged_90d", "pulls_merged_count"), ("release_count_365d", "releases_count")):
                 metrics[metric] = activity[key] if activity["coverage_by_module"][key] == "complete" else None
 
@@ -282,21 +321,39 @@ def execute_task(session_factory, task_id: str, github: GitHubClient) -> None:
             except OSError:
                 activity_archive = None
                 session.add(CollectionLog(request_id=task.task_id, task_id=task.task_id, repository_id=repo.repository_id, event_type="archive_failed", source_endpoint="activity", http_status=status, message_redacted="深度活动数据归档写入失败"))
-            insight_result = persist_insights(session, repo.repository_id, task.task_id, activity["events"], activity["sources"], window_start, window_end, [activity_archive] if activity_archive else [])
+            insight_result = persist_insights(
+                session, repo.repository_id, task.task_id, activity["events"], activity["sources"],
+                window_start, window_end, [activity_archive] if activity_archive else [],
+                normalized_event_counts=activity["event_counts"],
+                aggregate_from_store=task.scope_kind in {"incremental", "backfill"},
+            )
+            observed_counts = insight_result["observed_counts"]
+            for metric, key, module in (
+                ("commits_90d", "commits_count", "commits"),
+                ("issues_closed_90d", "issues_closed_count", "issues"),
+                ("pr_merged_90d", "pulls_merged_count", "pulls"),
+                ("release_count_365d", "releases_count", "releases"),
+            ):
+                metrics[metric] = observed_counts[key] if activity["coverage_by_module"][key] == "complete" else None
             session.add(ActivityWindow(
                 repository_id=repo.repository_id,
                 depth="deep",
                 window_start=window_start,
                 window_end=window_end,
-                commits_count=activity["commits_count"],
-                issues_opened_count=activity["issues_opened_count"],
-                issues_closed_count=activity["issues_closed_count"],
-                pulls_opened_count=activity["pulls_opened_count"],
-                pulls_merged_count=activity["pulls_merged_count"],
-                releases_count=activity["releases_count"],
+                commits_count=observed_counts["commits_count"],
+                issues_opened_count=observed_counts["issues_opened_count"],
+                issues_closed_count=observed_counts["issues_closed_count"],
+                pulls_opened_count=observed_counts["pulls_opened_count"],
+                pulls_merged_count=observed_counts["pulls_merged_count"],
+                releases_count=observed_counts["releases_count"],
                 coverage=depth_coverage,
                 collected_at=collected_at,
-                details_json=json.dumps({"coverage_by_module": activity["coverage_by_module"]}, ensure_ascii=False),
+                details_json=json.dumps({
+                    "coverage_by_module": activity["coverage_by_module"],
+                    "scope_kind": task.scope_kind,
+                    "collection_window_start": iso_z(query_start),
+                    "collection_window_end": iso_z(window_end),
+                }, ensure_ascii=False),
                 source_archive_path=activity_archive,
             ))
         result = AnalysisResult(
@@ -326,31 +383,46 @@ def execute_task(session_factory, task_id: str, github: GitHubClient) -> None:
             ))
         session.add(result)
         incomplete = coverage == "partial" or (insight_result is not None and insight_result["status"] == "partial")
-        task.status = "partial" if incomplete else "succeeded"
+        exhausted_retries = bool(activity and activity.get("defer_reason") == "rate_limit" and task.attempt >= MAX_ATTEMPTS)
+        task.status = "failed" if exhausted_retries else "queued" if deferred_until is not None else "partial" if incomplete else "succeeded"
         task.phase = None
         task.current_module = None
-        if reporter:
+        task.resume_after = deferred_until if task.status == "queued" else None
+        if task.status == "queued":
+            task.error_code = None
+            task.error_message = None
+            task.progress_kind = "unknown"
+            task.progress_percent = None
+            task.progress_updated_at = now
+            task.message = "历史回填已保存检查点，稍后让出队列并继续" if activity and activity.get("defer_reason") == "page_budget" else "GitHub 配额暂时不足，已保存检查点并延迟恢复"
+        elif exhausted_retries:
+            task.error_code = "GITHUB_RATE_LIMITED"
+            task.error_message = "GitHub 多次限流，已保留检查点；请稍后手动重试"
+            task.message = task.error_message
+            task.finished_at = now
+        elif reporter:
             task.progress_kind = "stages"
             task.progress_percent = 100
             task.progress_updated_at = now
         else:
             task.progress_kind = "unknown"
             task.progress_percent = None
-        task.message = (
-            "已按用户设置的页数上限完成采集与分析" if page_limit_reached and not incomplete
-            else "基础数据与分析已完成" if not incomplete
-            else "基础数据已保存，部分活动模块采集或事件校验不完整"
-        )
-        task.finished_at = now
-        task.heartbeat_at = task.finished_at
+        if task.status not in {"queued", "failed"}:
+            task.message = (
+                "已达到用户设置的页数预算，后续页面未采集完整" if page_limit_reached
+                else "基础数据与分析已完成" if not incomplete
+                else "基础数据已保存，部分活动模块采集或事件校验不完整"
+            )
+            task.finished_at = now
+        task.heartbeat_at = now
         task.lease_until = None
-        session.add(CollectionLog(request_id=task.task_id, task_id=task.task_id, repository_id=repo.repository_id, event_type="collection_completed", source_endpoint=f"/repositories/{repo.repository_id}", http_status=status, message_redacted=f"depth={task.depth}; coverage={coverage}"))
+        session.add(CollectionLog(request_id=task.task_id, task_id=task.task_id, repository_id=repo.repository_id, event_type="collection_deferred" if task.status == "queued" else "collection_completed", source_endpoint=f"/repositories/{repo.repository_id}", http_status=status, message_redacted=f"depth={task.depth}; coverage={coverage}"))
         session.commit()
-        _log_task_timing(github, task_id, repository_id, depth, task.status, task_started, initial_metrics)
+        _log_task_timing(github, task_id, repository_id, depth, "deferred" if task.status == "queued" else task.status, task_started, initial_metrics)
     except Exception as exc:
         session.rollback()
         if expected_attempt is not None:
-            logger.error("Task execution failed task_id=%s error_type=%s", task_id, type(exc).__name__)
+            logger.exception("Task execution failed task_id=%s error_type=%s", task_id, type(exc).__name__)
             failed = _finish_failed(
                 session,
                 task_id,
@@ -369,6 +441,50 @@ def _parse(value: str | None):
     from backend.app.pipeline.event_normalizer import event_date
 
     return event_date(value)
+
+
+def _defer_rate_limited(session: Session, task_id: str, attempt: int | None, lease_owner: str | None, resume_after) -> str | None:
+    session.rollback()
+    begin_immediate(session)
+    task = session.get(CollectionTask, task_id)
+    now = utc_now()
+    if not _owns_attempt(task, attempt, lease_owner, now):
+        session.rollback()
+        return None
+    task.phase = None
+    task.current_module = None
+    task.lease_until = None
+    task.heartbeat_at = now
+    if task.attempt >= MAX_ATTEMPTS:
+        task.status = "failed"
+        task.finished_at = now
+        task.resume_after = None
+        task.error_code = "GITHUB_RATE_LIMITED"
+        task.error_message = "GitHub 多次限流，已保留检查点；请稍后手动重试"
+        task.message = task.error_message
+        status = "failed"
+    else:
+        task.status = "queued"
+        task.finished_at = None
+        task.resume_after = resume_after
+        task.error_code = None
+        task.error_message = None
+        task.progress_kind = "unknown"
+        task.progress_percent = None
+        task.progress_updated_at = now
+        task.message = "GitHub 配额暂时不足，任务已延迟恢复"
+        status = "deferred"
+    session.add(CollectionLog(
+        request_id=task.task_id,
+        task_id=task.task_id,
+        repository_id=task.repository_id,
+        event_type="collection_deferred" if status == "deferred" else "collection_failed",
+        source_endpoint=f"/repositories/{task.repository_id}",
+        http_status=429,
+        message_redacted=task.message,
+    ))
+    session.commit()
+    return status
 
 
 def _collect_deep(
@@ -459,7 +575,11 @@ def _collect_deep(
             and page_cap is not None
             and result.pages_fetched == page_cap
         )
-        module_coverage = "complete" if (result.complete or limit_reached) and result.error_code is None else "partial"
+        module_coverage = (
+            "complete" if result.complete and result.error_code is None
+            else "budget_exhausted" if limit_reached
+            else "partial"
+        )
         coverage[name] = module_coverage
         relevant_start = end - timedelta(days=365) if name == "releases" else start
         timestamps = []
@@ -477,17 +597,17 @@ def _collect_deep(
             "page_cap": page_cap, "limit_reached": limit_reached,
             "observed_records": result.observed_items,
             "rate_limit_status": "limited" if result.rate_limited_count else "not_observed",
-            "error_code": result.error_code or ("GITHUB_MAX_PAGES" if result.has_next and not limit_reached else None),
+            "error_code": result.error_code or ("GITHUB_MAX_PAGES" if limit_reached else "GITHUB_INCOMPLETE_PAGINATION" if result.has_next else None),
             "endpoint": f"/repos/{full_name}/{name}",
             "query": {"since": start_iso, "until": end_iso} if name == "commits" else {"state": "all", "since": start_iso, "since_semantics": "updated_at"} if name == "issues" else {"state": "closed", "sort": "updated"} if name == "pulls" else {},
         }
         module_status = "complete" if module_coverage == "complete" else ("partial" if result.pages_fetched else "failed")
-        error_code = result.error_code or ("GITHUB_MAX_PAGES" if result.has_next and not limit_reached else None)
+        error_code = result.error_code or ("GITHUB_MAX_PAGES" if limit_reached else "GITHUB_INCOMPLETE_PAGINATION" if result.has_next else None)
         if error_code:
             raw[name] = {
                 "pages": result.raw_pages,
                 "error": error_code,
-                "message": result.error_message or "达到分页上限，仍有后续页面",
+                "message": result.error_message or ("达到用户设置的页数预算，仍有后续页面" if limit_reached else "分页尚未完成"),
             }
         else:
             raw[name] = result.raw_pages

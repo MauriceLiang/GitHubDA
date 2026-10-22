@@ -33,8 +33,10 @@ class TaskProgressReporter:
         self.attempt = attempt
         self.lease_owner = lease_owner
 
-    def begin_module(self, module: str, page_cap: int | None) -> None:
+    def begin_module(self, module: str, page_cap: int | None, *, pages_fetched: int = 0, observed_items: int = 0) -> None:
         _validate_module(module)
+        if pages_fetched < 0 or observed_items < 0:
+            raise ValueError("Page and item counts must be non-negative")
 
         def update(session: Session, task: CollectionTask, now: datetime) -> None:
             progress = session.get(TaskModuleProgress, (self.task_id, module))
@@ -59,6 +61,8 @@ class TaskProgressReporter:
                 progress.coverage = "unknown"
                 progress.started_at = now
                 progress.page_cap = page_cap
+                progress.pages_fetched = pages_fetched
+                progress.observed_items = observed_items
             elif progress.status != "running":
                 raise ValueError(f"Cannot restart terminal task module {module}")
             progress.last_updated_at = now
@@ -99,7 +103,7 @@ class TaskProgressReporter:
         _validate_module(module)
         if status not in TERMINAL_MODULE_STATUSES:
             raise ValueError(f"Invalid terminal module status: {status}")
-        if coverage not in {"complete", "partial", "not_collected", "unknown"}:
+        if coverage not in {"complete", "partial", "budget_exhausted", "deferred", "not_collected", "unknown"}:
             raise ValueError(f"Invalid module coverage: {coverage}")
 
         def update(session: Session, task: CollectionTask, now: datetime) -> None:
@@ -165,7 +169,7 @@ class TaskProgressReporter:
 
 
 def initialize_attempt_progress(session: Session, task: CollectionTask, now: datetime) -> None:
-    github_max_pages = get_github_max_pages(session)
+    github_max_pages = None if task.scope_kind in {"window", "incremental"} else get_github_max_pages(session)
     for module in MODULE_ORDER:
         session.add(TaskModuleProgress(
             task_id=task.task_id,

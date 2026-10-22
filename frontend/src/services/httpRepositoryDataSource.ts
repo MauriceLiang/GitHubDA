@@ -1,7 +1,7 @@
 import type {
   CollectionSettings, CommitActivityPage, CommitEvent, ComparisonBundle, ComparisonEntry, ComparisonMode, Coverage, Granularity, HistogramResult, ReleaseDetails, ReleaseRecord,
   IssueOnlineDetail, IssueRecordDetail, IssueRecordPage, Metric, Observation, PullRequestActivityDetail, PullRequestActivityPage, PullRequestOnlineDetail, RepositoryAnalysis, RepositoryStatus, RepositorySummary,
-  ResearchDataset, ResearchGroup, ResearchScatterPoint, TaskItem, TaskStatus, TimePoint, TimeWindow,
+  FeaturedDatasetImportResult, FeaturedDatasetStatus, ResearchDataset, ResearchGroup, ResearchScatterPoint, TaskItem, TaskStatus, TimePoint, TimeWindow,
 } from './types'
 import type { RepositoryDataSource } from './repositoryDataSource'
 
@@ -55,7 +55,7 @@ async function data<T>(path: string, init?: RequestInit): Promise<T> {
   return (await request<Envelope<T>>(path, init)).data
 }
 
-async function csv(path: string): Promise<Blob> {
+async function downloadResponse(path: string, failureLabel: string): Promise<Blob> {
   await openSession()
   const response = await fetch(`/api/browser/v1${path}`, {
     credentials: 'same-origin',
@@ -63,9 +63,13 @@ async function csv(path: string): Promise<Blob> {
   })
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as ApiError
-    throw new Error(body.error?.message ?? `导出失败（${response.status}）`)
+    throw new Error(body.error?.message ?? `${failureLabel}（${response.status}）`)
   }
   return response.blob()
+}
+
+function csv(path: string): Promise<Blob> {
+  return downloadResponse(path, '导出失败')
 }
 
 function object(value: unknown): Record<string, any> {
@@ -131,11 +135,9 @@ function mapCoverage(quality: Record<string, any> | undefined, label: string): C
   if (!quality || quality.coverage === 'not_collected' || quality.status === 'missing' || quality.status === 'failed') {
     return { state: 'missing', label: '未采集', detail: qualityReason(quality?.reason) ?? `${label}暂无可用分析结果` }
   }
-  if (quality.coverage === 'partial' || quality.status === 'partial' || quality.status === 'insufficient_samples') {
-    return { state: 'partial', label: quality.status === 'insufficient_samples' ? '样本不足' : '部分覆盖', detail: qualityReason(quality.reason) }
-  }
-  if (quality.limit_reached === true) {
-    return { state: 'complete', label: '按设置完成', detail: qualityReason(quality.reason) }
+  if (quality.coverage === 'partial' || quality.coverage === 'budget_exhausted' || quality.status === 'partial' || quality.status === 'insufficient_samples') {
+    const label = quality.coverage === 'budget_exhausted' ? '页数预算耗尽' : quality.status === 'insufficient_samples' ? '样本不足' : '部分覆盖'
+    return { state: 'partial', label, detail: qualityReason(quality.reason) }
   }
   return { state: 'complete', label: '完整覆盖' }
 }
@@ -228,6 +230,39 @@ function statusFromInsights(status: unknown): RepositoryStatus | null {
 }
 
 export class HttpRepositoryDataSource implements RepositoryDataSource {
+  async getFeaturedDatasetStatus(): Promise<FeaturedDatasetStatus> {
+    const status = await data<Record<string, any>>('/datasets/featured/status')
+    return {
+      available: Boolean(status.available),
+      datasetId: String(status.dataset_id ?? 'featured-default'),
+      version: textOrNull(status.version),
+      totalRepositories: Number(status.total_repositories ?? 0),
+      importedRepositories: Number(status.imported_repositories ?? 0),
+      dataAsOf: textOrNull(status.data_as_of),
+      bundleHash: textOrNull(status.bundle_hash),
+      reason: textOrNull(status.reason),
+    }
+  }
+
+  async importFeaturedDataset(): Promise<FeaturedDatasetImportResult> {
+    const result = await data<Record<string, any>>('/datasets/featured/import', { method: 'POST' })
+    return {
+      datasetId: String(result.dataset_id ?? 'featured-default'),
+      version: String(result.version ?? ''),
+      bundleHash: String(result.bundle_hash ?? ''),
+      importedCount: Number(result.imported_count ?? 0),
+      alreadyPresentCount: Number(result.already_present_count ?? 0),
+      snapshotCount: Number(result.snapshot_count ?? 0),
+      eventCount: Number(result.event_count ?? 0),
+      warningCount: Number(result.warning_count ?? 0),
+      skippedCount: Number(result.skipped_count ?? 0),
+    }
+  }
+
+  exportFeaturedDataset(): Promise<Blob> {
+    return downloadResponse('/datasets/featured/export', '精选数据包下载失败')
+  }
+
   async getCollectionSettings(): Promise<CollectionSettings> {
     const settings = await data<{ github_max_pages: number }>('/settings')
     return { githubMaxPages: settings.github_max_pages }
@@ -285,11 +320,11 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
     await request(`/library/repositories/${repositoryId(id)}`, { method: 'DELETE' })
   }
 
-  async refreshRepository(id: string): Promise<string> {
+  async refreshRepository(id: string, scopeKind: 'quick' | 'window' = 'quick'): Promise<string> {
     const result = await data<Record<string, any>>(`/repositories/${repositoryId(id)}/refresh`, {
       method: 'POST',
       headers: { 'Idempotency-Key': crypto.randomUUID() },
-      body: JSON.stringify({ depth: 'deep', force: false }),
+      body: JSON.stringify({ depth: 'deep', force: false, scope_kind: scopeKind }),
     })
     return String(result.task_id)
   }
@@ -322,9 +357,8 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
     const pullCoverage = mapCoverage(pullQuality, 'PR')
     const releaseCoverage = mapCoverage(releaseQuality, 'Release')
     const coverages = [commitsCoverage, issueCoverage, pullCoverage, releaseCoverage]
-    const pageLimitReached = [commitQuality, issueQuality, pullQuality, releaseQuality].some((quality) => quality.limit_reached === true)
     const coverage: Coverage = coverages.every((item) => item.state === 'complete')
-      ? { state: 'complete', label: pageLimitReached ? '按设置完成' : '完整覆盖', detail: pageLimitReached ? '至少一个活动接口达到用户设置的页数上限，未请求后续页。' : undefined }
+      ? { state: 'complete', label: '完整覆盖' }
       : coverages.every((item) => item.state === 'missing')
         ? { state: 'missing', label: '未采集', detail: result.limitations?.[0] }
         : { state: 'partial', label: '部分覆盖', detail: coverages.filter((item) => item.state !== 'complete').map((item) => item.label).join(' · ') }
@@ -711,6 +745,19 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
         stage: textOrNull(task.message) ?? textOrNull(task.phase) ?? '等待 Worker 更新状态',
         progressPercent: numberOrNull(task.progress_percent),
         progressKind: task.progress_kind === 'stages' ? 'stages' : 'unknown',
+        scopeKind: task.scope_kind === 'backfill' ? 'backfill' : task.scope_kind === 'incremental' ? 'incremental' : task.scope_kind === 'window' ? 'window' : 'quick',
+        windowStart: textOrNull(task.window_start),
+        windowEnd: textOrNull(task.window_end),
+        resumeAfter: textOrNull(task.resume_after),
+        modules: array(task.modules).map((module) => ({
+          name: String(module.name ?? ''),
+          status: String(module.status ?? 'pending'),
+          coverage: String(module.coverage ?? 'unknown'),
+          pagesFetched: Number(module.pages_fetched ?? 0),
+          pageCap: numberOrNull(module.page_cap),
+          observedItems: Number(module.observed_items ?? 0),
+          errorCode: textOrNull(module.error_code),
+        })),
         updatedAt: shortDate(task.progress_updated_at ?? task.finished_at ?? task.started_at ?? task.created_at) ?? '—',
         error: textOrNull(error.message) ?? undefined,
       }

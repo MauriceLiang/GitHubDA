@@ -5,7 +5,7 @@ from collections import Counter
 from datetime import date, datetime, time, timedelta
 from uuid import uuid4
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 
@@ -13,18 +13,23 @@ from backend.app.analytics.insights import LIMITATIONS, calculate_insights
 from backend.app.core.clock import iso_z, utc_now
 from backend.app.core.exceptions import AppError
 from backend.app.persistence.models import Repository, RepositoryActivityEvent, RepositoryInsightRun
+from backend.app.pipeline.collection_archive import iter_module_pages, iter_module_records
 from backend.app.pipeline.event_normalizer import normalize_events
 from backend.app.pipeline.raw_archive import read_archive
 
 METRIC_VERSION = "insights-v1"
 MODULES = ("commits", "issues", "pulls", "releases")
-PAGE_LIMIT_NOTE = "已达到用户设置的接口页数上限；本次按设置完成，未请求后续页。"
+PAGE_LIMIT_NOTE = "已达到用户设置的接口页数预算；仍有后续页未采集，当前指标只反映已观察样本。"
 
 
-def persist_insights(session: Session, repository_id: int, task_id: str, rows: dict, sources: dict, start, end, archive_paths: list[str], *, version=METRIC_VERSION, origin="collection"):
+def persist_insights(session: Session, repository_id: int, task_id: str, rows: dict, sources: dict, start, end, archive_paths: list[str], *, normalized_event_counts: dict | None = None, aggregate_from_store=False, version=METRIC_VERSION, origin="collection"):
     normalized, checked_sources = {}, {}
     for module in MODULES:
-        normalized[module], counts = normalize_events(module, rows.get(module, []))
+        if normalized_event_counts is None:
+            normalized[module], counts = normalize_events(module, rows.get(module, []))
+        else:
+            normalized[module] = rows.get(module, [])
+            counts = normalized_event_counts[module]
         source = {**sources.get(module, {"coverage": "not_collected"}), **counts}
         if (counts["rejected_records"] or counts["invalid_event_times"]) and source["coverage"] == "complete":
             source["coverage"] = "partial"
@@ -45,6 +50,29 @@ def persist_insights(session: Session, repository_id: int, task_id: str, rows: d
                 statement = insert(RepositoryActivityEvent).values(batch)
                 mutable = {key: getattr(statement.excluded, key) for key in batch[0] if key not in {"repository_id", "event_type", "source_item_id", "first_seen_at"}}
                 session.execute(statement.on_conflict_do_update(index_elements=["repository_id", "event_type", "source_item_id"], set_=mutable))
+    source_task_ids = [task_id]
+    if aggregate_from_store:
+        normalized = _stored_window_events(session, repository_id, start, end)
+        prior_runs = session.scalars(select(RepositoryInsightRun).where(
+            RepositoryInsightRun.repository_id == repository_id,
+            RepositoryInsightRun.metric_version == version,
+            RepositoryInsightRun.window_end >= start,
+            RepositoryInsightRun.window_start <= end,
+        )).all()
+        for prior in prior_runs:
+            try:
+                prior_task_ids = json.loads(prior.source_task_ids_json)
+                prior_archives = json.loads(prior.source_archive_paths_json)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(prior_task_ids, list):
+                source_task_ids.extend(item for item in prior_task_ids if isinstance(item, str))
+            if isinstance(prior_archives, list):
+                archive_paths.extend(item for item in prior_archives if isinstance(item, str))
+        source_task_ids = list(dict.fromkeys(source_task_ids))
+        archive_paths = list(dict.fromkeys(archive_paths))
+        for source in checked_sources.values():
+            source["calculation_basis"] = "local_unique_event_store"
     metrics = calculate_insights(normalized, checked_sources, start, end)
     states = [m["quality"]["status"] for m in metrics.values()]
     status = "missing" if all(s == "missing" for s in states) else "partial" if any(s in {"partial", "missing", "failed"} for s in states) else "ready"
@@ -53,10 +81,68 @@ def persist_insights(session: Session, repository_id: int, task_id: str, rows: d
         limitations.append(PAGE_LIMIT_NOTE)
     if not archive_paths:
         limitations.append("原始归档不可用；本次统计及事件仍保留，但原始响应的可复核性下降。")
-    result = {"repository_id": repository_id, "run_id": str(uuid4()), "metric_version": version, "status": status, "window_start": iso_z(start), "window_end": iso_z(end), "timezone": "UTC", "analyzed_at": iso_z(now), "source_task_ids": [task_id], "source_archive_paths": archive_paths, "origin": origin, "sources": checked_sources, "insights": metrics, "limitations": limitations}
-    session.add(RepositoryInsightRun(run_id=result["run_id"], input_fingerprint=fingerprint, repository_id=repository_id, metric_version=version, window_start=start, window_end=end, analyzed_at=now, source_task_ids_json=json.dumps([task_id]), source_archive_paths_json=json.dumps(archive_paths), module_coverage_json=json.dumps(checked_sources), status=status, limitations_json=json.dumps(limitations, ensure_ascii=False), result_json=json.dumps(result, ensure_ascii=False)))
+    observed_counts = _observed_event_counts(normalized, start, end)
+    result = {"repository_id": repository_id, "run_id": str(uuid4()), "metric_version": version, "status": status, "window_start": iso_z(start), "window_end": iso_z(end), "timezone": "UTC", "analyzed_at": iso_z(now), "source_task_ids": source_task_ids, "source_archive_paths": archive_paths, "origin": origin, "sources": checked_sources, "insights": metrics, "observed_counts": observed_counts, "limitations": limitations}
+    session.add(RepositoryInsightRun(run_id=result["run_id"], input_fingerprint=fingerprint, repository_id=repository_id, metric_version=version, window_start=start, window_end=end, analyzed_at=now, source_task_ids_json=json.dumps(source_task_ids), source_archive_paths_json=json.dumps(archive_paths), module_coverage_json=json.dumps(checked_sources), status=status, limitations_json=json.dumps(limitations, ensure_ascii=False), result_json=json.dumps(result, ensure_ascii=False)))
     session.flush()
     return result
+
+
+def _stored_window_events(session: Session, repository_id: int, start, end) -> dict[str, list[dict]]:
+    release_start = end - timedelta(days=365)
+    ranges = {
+        "commit": (RepositoryActivityEvent.event_at >= start) & (RepositoryActivityEvent.event_at < end),
+        "issue": or_(
+            (RepositoryActivityEvent.created_at >= start) & (RepositoryActivityEvent.created_at < end),
+            (RepositoryActivityEvent.closed_at >= start) & (RepositoryActivityEvent.closed_at < end),
+            (RepositoryActivityEvent.updated_at >= start) & (RepositoryActivityEvent.updated_at < end),
+        ),
+        "pull_request": or_(
+            (RepositoryActivityEvent.created_at >= start) & (RepositoryActivityEvent.created_at < end),
+            (RepositoryActivityEvent.closed_at >= start) & (RepositoryActivityEvent.closed_at < end),
+            (RepositoryActivityEvent.merged_at >= start) & (RepositoryActivityEvent.merged_at < end),
+            (RepositoryActivityEvent.updated_at >= start) & (RepositoryActivityEvent.updated_at < end),
+        ),
+        "release": (RepositoryActivityEvent.published_at >= release_start) & (RepositoryActivityEvent.published_at < end),
+    }
+    module_by_type = {"commit": "commits", "issue": "issues", "pull_request": "pulls", "release": "releases"}
+    events = {module: [] for module in MODULES}
+    for event_type, predicate in ranges.items():
+        stored = session.scalars(select(RepositoryActivityEvent).where(
+            RepositoryActivityEvent.repository_id == repository_id,
+            RepositoryActivityEvent.event_type == event_type,
+            predicate,
+        )).all()
+        module = module_by_type[event_type]
+        events[module] = [{
+            "event_type": item.event_type,
+            "source_item_id": item.source_item_id,
+            "event_at": item.event_at,
+            "created_at": item.created_at,
+            "closed_at": item.closed_at,
+            "merged_at": item.merged_at,
+            "published_at": item.published_at,
+            "updated_at": item.updated_at,
+            "is_draft": item.is_draft,
+            "is_prerelease": item.is_prerelease,
+        } for item in stored]
+    return events
+
+
+def _observed_event_counts(events: dict[str, list[dict]], start, end) -> dict[str, int]:
+    release_start = end - timedelta(days=365)
+
+    def count(module, field, lower=start):
+        return sum(1 for item in events[module] if item.get(field) is not None and lower <= item[field] < end)
+
+    return {
+        "commits_count": count("commits", "event_at"),
+        "issues_opened_count": count("issues", "created_at"),
+        "issues_closed_count": count("issues", "closed_at"),
+        "pulls_opened_count": count("pulls", "created_at"),
+        "pulls_merged_count": count("pulls", "merged_at"),
+        "releases_count": count("releases", "published_at", release_start),
+    }
 
 
 def repository_insights(session, repository_id):
@@ -81,17 +167,16 @@ def repository_release_detail(session, repository_id, release_id):
             archive = read_archive(archive_path)
         except FileNotFoundError:
             continue
-        for raw_page in archive.get("releases", []):
-            page = json.loads(raw_page) if isinstance(raw_page, str) else raw_page
-            if not isinstance(page, list):
-                continue
-            for item in page:
-                if isinstance(item, dict) and item.get("id") == release_id:
+        try:
+            for item in iter_module_records(archive.get("releases")):
+                if item.get("id") == release_id:
                     return {
                         "id": str(release_id),
                         "name": item.get("name") if isinstance(item.get("name"), str) else None,
                         "body": item.get("body") if isinstance(item.get("body"), str) else None,
                     }
+        except (OSError, ValueError, TypeError):
+            continue
     raise AppError(404, "RESOURCE_NOT_FOUND", "当前采集归档中没有该 Release 说明，请重新采集仓库数据")
 
 
@@ -160,9 +245,7 @@ def repository_commit_activity(session, repository_id, *, page=1, per_page=20, s
                 continue
             archive_found = True
             commit_archive = archive.get("commits")
-            pages = commit_archive.get("pages", []) if isinstance(commit_archive, dict) else commit_archive
-            if not isinstance(pages, list) or len(pages) > 100:
-                raise ValueError("invalid commit archive pages")
+            pages = iter_module_pages(commit_archive)
             for raw_page in pages:
                 if isinstance(raw_page, str):
                     if len(raw_page) > 16_000_000:
@@ -201,7 +284,7 @@ def repository_commit_activity(session, repository_id, *, page=1, per_page=20, s
     except (OSError, ValueError, TypeError, json.JSONDecodeError, RecursionError) as exc:
         raise AppError(503, "COMMIT_ARCHIVE_UNAVAILABLE", "Commit 采集归档损坏或不可读取，请重新采集仓库数据") from exc
 
-    coverage_state = module_coverage if module_coverage in {"complete", "partial"} else "missing"
+    coverage_state = "partial" if module_coverage == "budget_exhausted" else module_coverage if module_coverage in {"complete", "partial"} else "missing"
     if not archive_found:
         coverage_state = "missing"
     elif missing_archive:
@@ -307,9 +390,7 @@ def repository_closed_issues(session, repository_id, search=None, *, include_bod
                 continue
             archive_found = True
             issue_archive = archive.get("issues")
-            pages = issue_archive.get("pages", []) if isinstance(issue_archive, dict) else issue_archive
-            if not isinstance(pages, list) or len(pages) > 100:
-                raise ValueError("invalid issue archive pages")
+            pages = iter_module_pages(issue_archive)
             for raw_page in pages:
                 if isinstance(raw_page, str):
                     if len(raw_page) > 16_000_000:
@@ -349,7 +430,7 @@ def repository_closed_issues(session, repository_id, search=None, *, include_bod
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
         raise AppError(503, "ISSUE_ARCHIVE_UNAVAILABLE", "Issue 采集归档损坏或不可读取，请重新采集仓库数据") from exc
 
-    coverage_state = module_coverage if module_coverage in {"complete", "partial"} else "missing"
+    coverage_state = "partial" if module_coverage == "budget_exhausted" else module_coverage if module_coverage in {"complete", "partial"} else "missing"
     if not archive_found:
         coverage_state = "missing"
     elif missing_archive:
@@ -439,9 +520,7 @@ def repository_pull_requests(session, repository_id, search=None, *, include_bod
             if pull_archive is None:
                 continue
             pull_data_found = True
-            pages = pull_archive.get("pages", []) if isinstance(pull_archive, dict) else pull_archive
-            if not isinstance(pages, list) or len(pages) > 100:
-                raise ValueError("invalid pull request archive pages")
+            pages = iter_module_pages(pull_archive)
             for raw_page in pages:
                 if isinstance(raw_page, str):
                     if len(raw_page) > 16_000_000:
@@ -482,7 +561,7 @@ def repository_pull_requests(session, repository_id, search=None, *, include_bod
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
         raise AppError(503, "PULL_REQUEST_ARCHIVE_UNAVAILABLE", "Pull Request 采集归档损坏或不可读取，请重新采集仓库数据") from exc
 
-    coverage_state = module_coverage if module_coverage in {"complete", "partial"} else "missing"
+    coverage_state = "partial" if module_coverage == "budget_exhausted" else module_coverage if module_coverage in {"complete", "partial"} else "missing"
     if not archive_found or not pull_data_found:
         coverage_state = "missing"
     elif missing_archive:

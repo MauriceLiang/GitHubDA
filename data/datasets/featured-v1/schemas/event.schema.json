@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "repository_id",
+    "event_type",
+    "source_item_id"
+  ],
+  "properties": {
+    "repository_id": {
+      "type": "integer"
+    },
+    "event_type": {
+      "enum": [
+        "commit",
+        "issue",
+        "pull_request",
+        "release"
+      ]
+    },
+    "source_item_id": {
+      "type": "string"
+    }
+  }
+}

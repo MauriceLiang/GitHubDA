@@ -1,6 +1,6 @@
 import type {
   CollectionSettings, CommitActivityPage, ComparisonBundle, ComparisonMode, Granularity, ReleaseDetails, RepositoryAnalysis, RepositorySummary,
-  IssueOnlineDetail, IssueRecordDetail, IssueRecordPage, PullRequestActivityDetail, PullRequestActivityPage, PullRequestOnlineDetail, ResearchDataset, TaskItem, TimeWindow,
+  FeaturedDatasetImportResult, FeaturedDatasetStatus, IssueOnlineDetail, IssueRecordDetail, IssueRecordPage, PullRequestActivityDetail, PullRequestActivityPage, PullRequestOnlineDetail, ResearchDataset, TaskItem, TimeWindow,
 } from './types'
 
 /**
@@ -14,12 +14,15 @@ export interface RepositoryDataSource {
   saveCollectionSettings(settings: CollectionSettings): Promise<CollectionSettings>
 
   listRepositories(): Promise<RepositorySummary[]>
+  getFeaturedDatasetStatus(): Promise<FeaturedDatasetStatus>
+  importFeaturedDataset(): Promise<FeaturedDatasetImportResult>
+  exportFeaturedDataset(): Promise<Blob>
   /** Percent change in commits across two complete four-week windows; null when unavailable or the baseline is zero. */
   getActivityChangePercent(id: string): Promise<number | null>
   searchRepositories(query: string): Promise<(RepositorySummary & { alreadyInLibrary: boolean })[]>
   addRepository(input: string): Promise<{ repositoryId: string; taskId: string | null; existing: boolean }>
   removeRepository(id: string): Promise<void>
-  refreshRepository(id: string): Promise<string>
+  refreshRepository(id: string, scopeKind?: 'quick' | 'window'): Promise<string>
 
   /**
    * Full analysis bundle for one repository.

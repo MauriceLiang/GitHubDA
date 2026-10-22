@@ -59,6 +59,7 @@
         "coverage": "complete",
         "valid_samples": 89,
         "reason": null,
+        "limit_reached": false,
         "rejected_records": 0,
         "invalid_event_times": 0
       },
@@ -144,6 +145,7 @@
         "coverage": "complete",
         "valid_samples": 10,
         "reason": null,
+        "limit_reached": false,
         "rejected_records": 0,
         "invalid_event_times": 0
       },
@@ -253,6 +255,7 @@
         "coverage": "complete",
         "valid_samples": 5,
         "reason": null,
+        "limit_reached": false,
         "rejected_records": 0,
         "invalid_event_times": 0
       },
@@ -362,6 +365,7 @@
         "coverage": "complete",
         "valid_samples": 3,
         "reason": null,
+        "limit_reached": false,
         "rejected_records": 0,
         "invalid_event_times": 0
       },

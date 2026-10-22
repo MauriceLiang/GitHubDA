@@ -7,7 +7,7 @@ import numpy as np
 from backend.app.core.clock import iso_z
 
 LIMITATIONS = [
-    "UTC，左闭右开窗口；达到用户设定的页数上限即视为本次采集完成，不代表查询范围内的全部记录或 GitHub 全历史。",
+    "UTC，左闭右开窗口；达到用户设定的页数上限表示预算耗尽，不代表查询范围内的全部记录或 GitHub 全历史。",
     "Commit 来自默认分支，包含合并提交；Issue 使用对象最近可观测关闭时间，不回溯 reopen 生命周期。",
     "PR 仅采集 closed 状态；合并耗时不是首次响应时间，不能计算所有创建 PR 的合并率。",
     "Release 仅统计已发布正式版本；预发布单独计数，纯 tag 不计入。",
@@ -26,14 +26,12 @@ def quality(source, n, *, insufficient=False):
         status = "failed"
     reason = source.get("error_code")
     if reason is None:
-        if status == "partial":
+        if coverage == "budget_exhausted":
+            reason = "达到用户设置的页数预算，仍有后续页未采集"
+        elif status == "partial":
             reason = "采集覆盖不完整，仅为已观察样本"
-        elif insufficient and source.get("limit_reached"):
-            reason = "样本不足；已达到用户设置的页数上限，未请求后续页"
         elif insufficient:
             reason = "样本不足"
-        elif source.get("limit_reached"):
-            reason = "已达到用户设置的页数上限，未请求后续页"
     return {"status": status, "coverage": coverage, "valid_samples": n, "reason": reason, "limit_reached": bool(source.get("limit_reached")), "rejected_records": source.get("rejected_records", 0), "invalid_event_times": source.get("invalid_event_times", 0)}
 
 

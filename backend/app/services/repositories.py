@@ -65,16 +65,37 @@ def repository_from_github(session: Session, payload: dict[str, Any]) -> Reposit
     return repo
 
 
-def make_task(session: Session, repository_id: int, depth: str, *, retry_of: str | None = None, idempotency_key: str | None = None) -> CollectionTask:
+def make_task(
+    session: Session,
+    repository_id: int,
+    depth: str,
+    *,
+    scope_kind: str = "quick",
+    scope_json: str | None = None,
+    retry_of: str | None = None,
+    idempotency_key: str | None = None,
+) -> CollectionTask:
+    if depth == "basic":
+        scope_kind = "quick"
     active = session.scalars(
         select(CollectionTask)
         .where(CollectionTask.repository_id == repository_id, CollectionTask.status.in_(["queued", "running"]))
         .order_by(desc(CollectionTask.created_at))
     ).all()
     for existing in active:
-        if existing.depth == depth or (depth == "basic" and existing.depth == "deep"):
+        if (existing.depth == depth and (depth == "basic" or existing.scope_kind == scope_kind)) or (depth == "basic" and existing.depth == "deep"):
             return existing
-    task = CollectionTask(task_id=str(uuid4()), repository_id=repository_id, depth=depth, status="queued", retry_of=retry_of, idempotency_key=idempotency_key)
+    now = utc_now()
+    if depth == "deep" and scope_json is None:
+        scope_json = json.dumps({
+            "window_start": iso_z(now - timedelta(days=90)),
+            "window_end": iso_z(now),
+        })
+    task = CollectionTask(
+        task_id=str(uuid4()), repository_id=repository_id, depth=depth, scope_kind=scope_kind,
+        scope_json=scope_json, status="queued", retry_of=retry_of, idempotency_key=idempotency_key,
+        created_at=now,
+    )
     session.add(task)
     session.flush()
     return task
@@ -187,7 +208,14 @@ def enqueue_add(session: Session, github_payload: dict[str, Any], auto_analyze: 
     return result, 201 if created else 200
 
 
-def enqueue_refresh(session: Session, repository_id: int, depth: str, idempotency_key: str | None, force: bool = False) -> dict[str, Any]:
+def enqueue_refresh(
+    session: Session,
+    repository_id: int,
+    depth: str,
+    idempotency_key: str | None,
+    force: bool = False,
+    scope_kind: str = "quick",
+) -> dict[str, Any]:
     if session.get(Repository, repository_id) is None:
         raise AppError(404, "RESOURCE_NOT_FOUND", "本地仓库不存在")
     begin_immediate(session)
@@ -206,7 +234,7 @@ def enqueue_refresh(session: Session, repository_id: int, depth: str, idempotenc
                 result = {"task_id": completed.task_id, "reused": True, "status": completed.status}
                 session.commit()
                 return result
-    task = make_task(session, repository_id, depth, idempotency_key=idempotency_key)
+    task = make_task(session, repository_id, depth, scope_kind=scope_kind, idempotency_key=idempotency_key)
     result = {"task_id": task.task_id, "reused": task.task_id in existing_ids, "status": task.status}
     session.commit()
     return result

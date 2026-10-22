@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from backend.app.core.clock import iso_z, utc_now
 from backend.app.core.exceptions import AppError
 from backend.app.integrations.github.client import PageObservation, PaginatedResult
-from backend.app.persistence.models import ActivityWindow, AnalysisResult, CollectionLog, CollectionTask, RepositoryInsightRun, RepositorySnapshot, TaskModuleProgress
+from backend.app.persistence.models import ActivityWindow, AnalysisResult, CollectionCheckpoint, CollectionLog, CollectionTask, RepositoryActivityEvent, RepositoryInsightRun, RepositorySnapshot, TaskModuleProgress
 from backend.app.pipeline.raw_archive import archive_json
 from backend.app.services.repositories import latest_analysis
 from backend.app.worker.executor import execute_task
@@ -27,6 +27,7 @@ class WorkerGitHub:
         self.fail_module = fail_module
         self.profile_etags = []
         self.deep_calls = []
+        self.deep_queries = []
         self.max_pages = 10
         event_time = iso_z(utc_now() - timedelta(days=1))
         self.records = {
@@ -48,20 +49,32 @@ class WorkerGitHub:
             raise AppError(504, "GITHUB_TIMEOUT", f"{module} timed out")
         return self.records[module], True, ["[]"]
 
-    def _list_detailed(self, module, on_page=None):
+    def _list_detailed(self, module, on_page=None, **options):
         rows, complete, pages = self._list(module)
+        page_offset = options.get("page_offset", 0)
+        records_offset = options.get("records_offset", 0)
+        stop_after_page = options.get("stop_after_page")
         if on_page:
             for index in range(len(pages)):
+                has_next = not complete and index == len(pages) - 1
+                if stop_after_page and stop_after_page(rows):
+                    has_next = False
+                    complete = True
                 on_page(PageObservation(
-                    page_index=index + 1,
-                    pages_fetched=index + 1,
-                    observed_items=len(rows),
+                    page_index=page_offset + index + 1,
+                    pages_fetched=page_offset + index + 1,
+                    observed_items=records_offset + len(rows),
                     page_cap=self.max_pages,
-                    has_next=not complete and index == len(pages) - 1,
+                    has_next=has_next,
                     duration_ms=0.1,
+                    records=rows,
+                    raw_body=json.dumps(rows),
+                    request_url="https://api.github.com/repos/example/project/commits?per_page=100",
+                    next_url="https://api.github.com/repos/example/project/commits?page=2" if has_next else None,
+                    http_status=200,
                 ))
         return PaginatedResult(
-            items=rows,
+            items=[] if not options.get("collect_items", True) else rows,
             raw_pages=pages,
             complete=complete,
             pages_fetched=len(pages),
@@ -83,17 +96,19 @@ class WorkerGitHub:
     def list_releases(self, *_args):
         return self._list("releases")
 
-    def list_commits_detailed(self, _full_name, _since, _until, *, on_page=None):
-        return self._list_detailed("commits", on_page)
+    def list_commits_detailed(self, _full_name, since, until, *, on_page=None, **options):
+        self.deep_queries.append(("commits", since, until))
+        return self._list_detailed("commits", on_page, **options)
 
-    def list_issues_detailed(self, _full_name, _since, _state="all", *, on_page=None):
-        return self._list_detailed("issues", on_page)
+    def list_issues_detailed(self, _full_name, since, _state="all", *, on_page=None, **options):
+        self.deep_queries.append(("issues", since, None))
+        return self._list_detailed("issues", on_page, **options)
 
-    def list_pulls_detailed(self, _full_name, _state="closed", *, on_page=None):
-        return self._list_detailed("pulls", on_page)
+    def list_pulls_detailed(self, _full_name, _state="closed", *, on_page=None, **options):
+        return self._list_detailed("pulls", on_page, **options)
 
-    def list_releases_detailed(self, _full_name, *, on_page=None):
-        return self._list_detailed("releases", on_page)
+    def list_releases_detailed(self, _full_name, *, on_page=None, **options):
+        return self._list_detailed("releases", on_page, **options)
 
 
 def _create_repository(client):
@@ -236,7 +251,7 @@ def test_deep_partial_coverage_keeps_basic_profile_complete(backend_client, monk
     archived = {}
 
     def capture_archive(_repository_id, _task_id, kind, value):
-        if kind == "deep_responses":
+        if kind == "activity":
             archived.update(value)
         return f"test/{kind}.json.gz"
 
@@ -254,9 +269,32 @@ def test_deep_partial_coverage_keeps_basic_profile_complete(backend_client, monk
     assert json.loads(deep.metrics_json)["commits_90d"] is None
     assert deep.coverage == "partial"
     assert archived["commits"]["error"] == "GITHUB_TIMEOUT"
+    assert archived["_meta"]["sources"]["commits"]["coverage"] == "partial"
 
 
-def test_reaching_user_page_limit_completes_collection_and_analysis(backend_client, monkeypatch):
+def test_successful_empty_activity_is_complete_and_distinct_from_failed_endpoint(backend_client, monkeypatch):
+    client, factory, default_github = backend_client
+    _create_repository(client)
+    task_id = _queue_task(factory, "deep")
+    _patch_archives(monkeypatch)
+    github = WorkerGitHub(default_github.repository)
+    github.records = {module: [] for module in ("commits", "issues", "pulls", "releases")}
+
+    execute_task(factory, task_id, github)
+
+    with factory() as session:
+        task = session.get(CollectionTask, task_id)
+        insight = session.scalar(select(RepositoryInsightRun).where(RepositoryInsightRun.repository_id == 123))
+    assert task.status == "succeeded"
+    assert insight.status == "ready"
+    assert insight.module_coverage_json
+    sources = json.loads(insight.module_coverage_json)
+    assert all(source["coverage"] == "complete" for source in sources.values())
+    assert all(source["observed_records"] == 0 for source in sources.values())
+    assert all(source.get("error_code") is None for source in sources.values())
+
+
+def test_reaching_user_page_limit_marks_collection_and_analysis_incomplete(backend_client, monkeypatch):
     client, factory, default_github = backend_client
     _create_repository(client)
     task_id = _queue_task(factory, "deep")
@@ -267,7 +305,7 @@ def test_reaching_user_page_limit_completes_collection_and_analysis(backend_clie
             super().__init__(repository)
             self.max_pages = 2
 
-        def list_commits_detailed(self, _full_name, _since, _until, *, on_page=None):
+        def list_commits_detailed(self, _full_name, _since, _until, *, on_page=None, **options):
             rows = self.records["commits"]
             pages = ["[]", "[]"]
             if on_page:
@@ -279,9 +317,14 @@ def test_reaching_user_page_limit_completes_collection_and_analysis(backend_clie
                         page_cap=self.max_pages,
                         has_next=True,
                         duration_ms=0.1,
+                        records=rows,
+                        raw_body=json.dumps(rows),
+                        request_url="https://api.github.com/repos/example/project/commits?page=1",
+                        next_url="https://api.github.com/repos/example/project/commits?page=3",
+                        http_status=200,
                     ))
             return PaginatedResult(
-                items=rows,
+                items=[] if not options.get("collect_items", True) else rows,
                 raw_pages=pages,
                 complete=False,
                 pages_fetched=self.max_pages,
@@ -292,7 +335,7 @@ def test_reaching_user_page_limit_completes_collection_and_analysis(backend_clie
             )
 
     def capture_archive(_repository_id, _task_id, kind, value):
-        if kind == "deep_responses":
+        if kind == "activity":
             archived.update(value)
         return f"test/{kind}.json.gz"
 
@@ -305,17 +348,17 @@ def test_reaching_user_page_limit_completes_collection_and_analysis(backend_clie
         commit_progress = session.get(TaskModuleProgress, (task_id, "commits"))
         insight = session.scalar(select(RepositoryInsightRun).where(RepositoryInsightRun.repository_id == 123))
 
-    assert task.status == "succeeded"
-    assert task.message == "已按用户设置的页数上限完成采集与分析"
-    assert deep.coverage == "complete"
-    assert commit_progress.status == "complete"
-    assert commit_progress.coverage == "complete"
+    assert task.status == "partial"
+    assert task.message == "已达到用户设置的页数预算，后续页面未采集完整"
+    assert deep.coverage == "partial"
+    assert commit_progress.status == "partial"
+    assert commit_progress.coverage == "budget_exhausted"
     assert commit_progress.pages_fetched == commit_progress.page_cap == 2
-    assert commit_progress.error_code is None
-    assert insight.status == "ready"
+    assert commit_progress.error_code == "GITHUB_MAX_PAGES"
+    assert insight.status == "partial"
     assert archived["_meta"]["sources"]["commits"]["limit_reached"] is True
     assert archived["_meta"]["sources"]["commits"]["has_next"] is True
-    assert "error" not in archived["commits"]
+    assert archived["commits"]["error"] == "GITHUB_MAX_PAGES"
 
 
 def test_deep_activity_archive_failure_keeps_collected_snapshot(backend_client, monkeypatch):
@@ -342,6 +385,65 @@ def test_deep_activity_archive_failure_keeps_collected_snapshot(backend_client, 
     assert archive_error is not None
 
 
+def test_history_backfill_yields_after_page_budget_with_checkpoint_for_resume(backend_client, monkeypatch):
+    client, factory, default_github = backend_client
+    _create_repository(client)
+    _patch_archives(monkeypatch)
+    now = utc_now().replace(microsecond=0)
+    scope = {
+        "window_start": "2020-01-01T00:00:00Z",
+        "window_end": iso_z(now),
+        "analysis_window_start": iso_z(now - timedelta(days=90)),
+        "analysis_window_end": iso_z(now),
+        "start_basis": "github_repository_created_at",
+        "pilot": True,
+    }
+    task_id = str(uuid4())
+    with factory() as session:
+        session.add(CollectionTask(task_id=task_id, repository_id=123, depth="deep", scope_kind="backfill", scope_json=json.dumps(scope), status="queued", created_at=now))
+        session.commit()
+    with factory() as session:
+        assert claim_next_task(session, "backfill-worker", 60).task_id == task_id
+
+    class PageLimitedGitHub(WorkerGitHub):
+        def __init__(self, repository):
+            super().__init__(repository)
+            self.max_pages = 2
+
+        def list_commits_detailed(self, _full_name, _since, _until, *, on_page=None, **options):
+            rows = self.records["commits"]
+            if on_page:
+                offset = options.get("page_offset", 0)
+                for index in range(2):
+                    on_page(PageObservation(
+                        page_index=offset + index + 1,
+                        pages_fetched=offset + index + 1,
+                        observed_items=len(rows),
+                        page_cap=2,
+                        has_next=True,
+                        duration_ms=0.1,
+                        records=rows,
+                        raw_body=json.dumps(rows),
+                        request_url=f"https://api.github.com/repos/example/project/commits?page={offset + index + 1}",
+                        next_url=f"https://api.github.com/repos/example/project/commits?page={offset + index + 2}",
+                        http_status=200,
+                    ))
+            return PaginatedResult([], ["[]", "[]"], False, 2, len(rows), True, http_calls=2)
+
+    execute_task(factory, task_id, PageLimitedGitHub(default_github.repository))
+
+    with factory() as session:
+        task = session.get(CollectionTask, task_id)
+        checkpoint = session.scalar(select(CollectionCheckpoint).where(CollectionCheckpoint.repository_id == 123, CollectionCheckpoint.module == "commits"))
+    assert task.status == "queued"
+    assert task.resume_after is not None
+    assert task.message == "历史回填已保存检查点，稍后让出队列并继续"
+    assert checkpoint is not None
+    assert checkpoint.status == "budget_exhausted"
+    assert checkpoint.pages_fetched == 2
+    assert checkpoint.next_url.endswith("page=3")
+
+
 def test_raw_archive_rejects_paths_outside_configured_root(tmp_path, monkeypatch):
     root = tmp_path / "raw"
     root.mkdir()
@@ -350,3 +452,57 @@ def test_raw_archive_rejects_paths_outside_configured_root(tmp_path, monkeypatch
     with pytest.raises(ValueError, match="escapes configured raw data directory"):
         archive_json(123, "task-id", "../../../../outside", {"data": "value"})
     assert not (tmp_path / "outside.json.gz").exists()
+
+
+def test_scheduler_queues_overlapped_incremental_sync_and_recalculates_from_deduplicated_store(backend_client, monkeypatch):
+    client, factory, default_github = backend_client
+    _create_repository(client)
+    monkeypatch.setattr("backend.app.worker.executor.archive_json", lambda _repository_id, task_id, kind, _value: f"test/{task_id}/{kind}.json.gz")
+    from backend.app.worker.scheduler import enqueue_due_incremental_syncs
+
+    assert enqueue_due_incremental_syncs() == 0
+    baseline_task_id = _queue_task(factory, "deep")
+    execute_task(factory, baseline_task_id, WorkerGitHub(default_github.repository))
+    assert enqueue_due_incremental_syncs() == 1
+
+    with factory() as session:
+        incremental = session.scalar(select(CollectionTask).where(CollectionTask.scope_kind == "incremental"))
+        scope = json.loads(incremental.scope_json)
+        incremental_task_id = incremental.task_id
+        claimed = claim_next_task(session, "incremental-test-worker", 60)
+        assert claimed and claimed.task_id == incremental_task_id
+
+    assert scope["overlap_days"] == 7
+    assert scope["analysis_window_start"] < scope["analysis_window_end"]
+    github = WorkerGitHub(default_github.repository)
+    github.max_pages = None
+    event_time = iso_z(utc_now() - timedelta(hours=6))
+    github.records["commits"].append({"sha": "b" * 40, "commit": {"committer": {"date": event_time}}})
+    github.records["issues"].append({"id": 4, "created_at": event_time, "closed_at": event_time})
+    github.records["pulls"].append({"id": 5, "created_at": event_time, "merged_at": event_time})
+    github.records["releases"].append({"id": 6, "published_at": event_time})
+    execute_task(factory, incremental_task_id, github)
+
+    with factory() as session:
+        task = session.get(CollectionTask, incremental_task_id)
+        run = session.scalar(select(RepositoryInsightRun).where(RepositoryInsightRun.repository_id == 123).order_by(RepositoryInsightRun.analyzed_at.desc()).limit(1))
+        activity = session.scalar(select(ActivityWindow).where(ActivityWindow.repository_id == 123).order_by(ActivityWindow.collected_at.desc()).limit(1))
+        event_count = session.scalar(select(func.count()).select_from(RepositoryActivityEvent).where(RepositoryActivityEvent.repository_id == 123))
+        event_rows = session.scalars(select(RepositoryActivityEvent).where(RepositoryActivityEvent.repository_id == 123)).all()
+        result = json.loads(run.result_json)
+
+    assert task.status == "succeeded"
+    assert event_count == 8, [(row.event_type, row.source_item_id, row.event_at) for row in event_rows]
+    assert result["sources"]["commits"]["query"]["since"] == scope["window_start"]
+    assert result["sources"]["commits"]["calculation_basis"] == "local_unique_event_store"
+    assert result["observed_counts"] == {
+        "commits_count": 2,
+        "issues_opened_count": 2,
+        "issues_closed_count": 2,
+        "pulls_opened_count": 2,
+        "pulls_merged_count": 2,
+        "releases_count": 2,
+    }
+    assert set(result["source_task_ids"]) == {baseline_task_id, incremental_task_id}
+    assert len(result["source_archive_paths"]) == 2
+    assert activity.commits_count == 2 and activity.issues_closed_count == 2 and activity.releases_count == 2

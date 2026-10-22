@@ -1,4 +1,5 @@
 from datetime import timedelta
+import json
 from uuid import uuid4
 
 import pytest
@@ -68,7 +69,8 @@ def test_task_detail_persists_module_progress_and_legacy_fields(backend_client):
 
     task_list = client.get("/api/v1/tasks", headers=HEADERS).json()["data"]["items"][0]
     assert task_list["progress_percent"] == 12
-    assert task_list["modules"] == []
+    assert len(task_list["modules"]) == 5
+    assert task_list["modules"][2]["pages_fetched"] == 2
 
     old_task = TaskResponse.model_validate({
         "task_id": task_id,
@@ -88,6 +90,36 @@ def test_task_detail_persists_module_progress_and_legacy_fields(backend_client):
     assert old_task.progress_kind == "unknown"
     assert old_task.modules == []
     assert old_task.eta_seconds is None
+
+
+def test_task_list_includes_saved_window_and_resume_state(backend_client):
+    client, factory, _github = backend_client
+    added = client.post(
+        "/api/v1/library/repositories",
+        json={"full_name": "example/project", "auto_analyze": False},
+        headers=HEADERS,
+    )
+    task_id = str(uuid4())
+    start = "2026-07-24T00:00:00Z"
+    end = "2026-10-22T00:00:00Z"
+    resume_after = utc_now() + timedelta(minutes=10)
+    with factory() as session:
+        session.add(CollectionTask(
+            task_id=task_id,
+            repository_id=added.json()["data"]["repository_id"],
+            depth="deep",
+            scope_kind="window",
+            scope_json=json.dumps({"window_start": start, "window_end": end}),
+            status="queued",
+            resume_after=resume_after,
+        ))
+        session.commit()
+
+    task = client.get("/api/v1/tasks", headers=HEADERS).json()["data"]["items"][0]
+    assert task["scope_kind"] == "window"
+    assert task["window_start"] == start
+    assert task["window_end"] == end
+    assert task["resume_after"] is not None
 
 
 def test_late_progress_from_expired_attempt_cannot_update_reclaimed_task(backend_client):

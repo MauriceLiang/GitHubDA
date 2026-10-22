@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowRight, Search } from 'lucide-vue-next'
+import { ArrowRight, Download, Search } from 'lucide-vue-next'
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import GdBadge from '@/components/ui/GdBadge.vue'
@@ -8,7 +8,8 @@ import GdCard from '@/components/ui/GdCard.vue'
 import GdInput from '@/components/ui/GdInput.vue'
 import { useAsyncData } from '@/composables/useAsyncData'
 import { useDataSource } from '@/composables/useDataSource'
-import type { RepositoryStatus, RepositorySummary } from '@/services/types'
+import { downloadBlob } from '@/lib/download'
+import type { FeaturedDatasetStatus, RepositoryStatus, RepositorySummary } from '@/services/types'
 import { useAnalysisStore } from '@/stores/analysis'
 import { useUiStore } from '@/stores/ui'
 
@@ -26,6 +27,12 @@ const searchError = ref<string | null>(null)
 const searching = ref(false)
 const busyId = ref<string | null>(null)
 const { data: repositories, loading, error, reload } = useAsyncData(() => source.listRepositories())
+const { data: featuredData, error: featuredStatusError, reload: reloadFeaturedStatus } = useAsyncData(() => source.getFeaturedDatasetStatus())
+const featuredStatus = ref<FeaturedDatasetStatus | null>(null)
+const importingFeatured = ref(false)
+const exportingFeatured = ref(false)
+
+watch(featuredData, (value) => { if (value) featuredStatus.value = value }, { immediate: true })
 
 watch(tab, () => { searchError.value = null })
 
@@ -100,6 +107,34 @@ async function remove(repo: RepositorySummary) {
     busyId.value = null
   }
 }
+
+async function importFeatured() {
+  if (!featuredStatus.value?.available || importingFeatured.value) return
+  importingFeatured.value = true
+  try {
+    const result = await source.importFeaturedDataset()
+    await Promise.all([reload(), reloadFeaturedStatus()])
+    ui.toast(`精选仓库导入完成：新增 ${result.importedCount} 个，已存在 ${result.alreadyPresentCount} 个；快照 ${result.snapshotCount} 份、活动记录 ${result.eventCount} 条${result.warningCount ? `，${result.warningCount} 项数据提示` : ''}`)
+  } catch (cause) {
+    ui.toast(cause instanceof Error ? cause.message : '导入精选仓库失败')
+  } finally {
+    importingFeatured.value = false
+  }
+}
+
+async function exportFeatured() {
+  if (!featuredStatus.value?.available || exportingFeatured.value) return
+  exportingFeatured.value = true
+  try {
+    const blob = await source.exportFeaturedDataset()
+    downloadBlob(blob, `repovantage-dataset-${featuredStatus.value.version ?? 'featured-v1'}.zip`)
+    ui.toast('精选数据包已开始下载')
+  } catch (cause) {
+    ui.toast(cause instanceof Error ? cause.message : '下载精选数据包失败')
+  } finally {
+    exportingFeatured.value = false
+  }
+}
 </script>
 
 <template>
@@ -108,6 +143,18 @@ async function remove(repo: RepositorySummary) {
       <div>
         <h1 class="m-0 text-[24px] font-semibold">仓库</h1>
         <p class="mt-1.5 text-muted">我的分析库与公开仓库发现</p>
+      </div>
+      <div class="flex flex-col items-end gap-1">
+        <div class="flex items-center gap-1.5">
+          <GdButton variant="outline" size="sm" :disabled="!featuredStatus?.available || importingFeatured" :title="featuredStatus?.reason ?? undefined" @click="importFeatured">
+            {{ importingFeatured ? '正在导入…' : '导入精选仓库' }}
+          </GdButton>
+          <GdButton variant="ghost" size="sm" :disabled="!featuredStatus?.available || exportingFeatured" @click="exportFeatured">
+            <Download :size="13" />{{ exportingFeatured ? '准备下载…' : '下载数据包' }}
+          </GdButton>
+        </div>
+        <span v-if="featuredStatus?.available" class="text-[10.5px] text-muted">{{ featuredStatus.importedRepositories }}/{{ featuredStatus.totalRepositories }} 已导入 · {{ featuredStatus.version }}</span>
+        <span v-else class="max-w-[360px] text-right text-[10.5px] text-muted">{{ featuredStatusError ?? featuredStatus?.reason ?? '正在读取内置数据包状态…' }}</span>
       </div>
     </div>
 

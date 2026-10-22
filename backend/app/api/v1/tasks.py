@@ -1,4 +1,5 @@
 from datetime import timedelta
+import json
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
@@ -42,11 +43,20 @@ def task_payload(task: CollectionTask, module_progress: list[TaskModuleProgress]
     if task.started_at is not None:
         elapsed_end = task.finished_at or utc_now()
         elapsed_seconds = round(max(0.0, (elapsed_end - task.started_at).total_seconds()), 3)
+    try:
+        scope = json.loads(task.scope_json or "{}")
+    except (TypeError, ValueError):
+        scope = {}
+    window_start = scope.get("window_start") if isinstance(scope, dict) else None
+    window_end = scope.get("window_end") if isinstance(scope, dict) else None
     return {
         "task_id": task.task_id,
         "repository_id": task.repository_id,
         "type": task.type,
         "depth": task.depth,
+        "scope_kind": task.scope_kind or "quick",
+        "window_start": window_start if isinstance(window_start, str) else None,
+        "window_end": window_end if isinstance(window_end, str) else None,
         "status": task.status,
         "phase": task.phase,
         "progress_percent": task.progress_percent,
@@ -55,6 +65,7 @@ def task_payload(task: CollectionTask, module_progress: list[TaskModuleProgress]
         "created_at": iso_z(task.created_at),
         "started_at": iso_z(task.started_at),
         "finished_at": iso_z(task.finished_at),
+        "resume_after": iso_z(task.resume_after),
         "error": error,
         "progress_kind": task.progress_kind or "unknown",
         "progress_updated_at": iso_z(task.progress_updated_at),
@@ -84,7 +95,18 @@ def list_tasks(
         count_statement = count_statement.where(CollectionTask.repository_id == repository_id)
     total = int(session.scalar(count_statement) or 0)
     tasks = session.scalars(statement.order_by(desc(CollectionTask.created_at)).offset((page - 1) * per_page).limit(per_page)).all()
-    return envelope(request, {"items": [task_payload(task) for task in tasks]}, pagination=pagination(page, per_page, total))
+    task_ids = [task.task_id for task in tasks]
+    module_rows = session.scalars(
+        select(TaskModuleProgress).where(TaskModuleProgress.task_id.in_(task_ids))
+    ).all() if task_ids else []
+    progress_by_task: dict[str, list[TaskModuleProgress]] = {}
+    for module in module_rows:
+        progress_by_task.setdefault(module.task_id, []).append(module)
+    return envelope(
+        request,
+        {"items": [task_payload(task, progress_by_task.get(task.task_id)) for task in tasks]},
+        pagination=pagination(page, per_page, total),
+    )
 
 
 @router.get("/{task_id}", response_model=SuccessEnvelope[TaskResponse])
@@ -133,7 +155,11 @@ def retry_task(
     active = session.scalar(select(CollectionTask.task_id).where(CollectionTask.repository_id == original.repository_id, CollectionTask.status.in_(["queued", "running"])).limit(1))
     if active:
         raise AppError(409, "CONFLICTING_OPERATION", "该仓库已有排队或执行中的采集任务")
-    task = CollectionTask(task_id=str(uuid4()), repository_id=original.repository_id, depth=original.depth, status="queued", retry_of=original.task_id, idempotency_key=idempotency_key)
+    task = CollectionTask(
+        task_id=str(uuid4()), repository_id=original.repository_id, depth=original.depth,
+        scope_kind=original.scope_kind or "quick", scope_json=original.scope_json,
+        status="queued", retry_of=original.task_id, idempotency_key=idempotency_key,
+    )
     session.add(task)
     result = {"task_id": task.task_id, "retry_of": original.task_id, "status": "queued"}
     session.commit()

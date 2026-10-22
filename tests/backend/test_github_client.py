@@ -1,5 +1,7 @@
 import httpx
 import pytest
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
 
 from backend.app.core.exceptions import AppError
 from backend.app.integrations.github.client import GITHUB_API, GitHubClient, PageObservation, parse_repository_input
@@ -49,6 +51,18 @@ def test_secondary_rate_limit_403_is_mapped_without_retry():
     assert error.value.status_code == 429
     assert error.value.details["retry_after_seconds"] == 9
     assert len(calls) == 1
+
+
+def test_retry_after_accepts_http_date():
+    retry_at = datetime.now(UTC) + timedelta(seconds=70)
+
+    def respond(_request):
+        return httpx.Response(429, headers={"Retry-After": format_datetime(retry_at, usegmt=True)}, json={"message": "limited"})
+
+    client = GitHubClient(httpx.Client(base_url=GITHUB_API, transport=httpx.MockTransport(respond)))
+    with pytest.raises(AppError) as error:
+        client.search_repositories("requests", None, None, "best_match", "desc", 1, 20)
+    assert 0 <= error.value.details["retry_after_seconds"] <= 70
 
 
 def test_non_rate_limit_403_is_not_reported_as_rate_limit():

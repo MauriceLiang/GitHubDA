@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "dataset_id": "featured-default",
+  "version": "featured-v1.0.0",
+  "generated_at": "2026-10-22T08:34:58Z",
+  "data_as_of": "2026-10-22T08:32:31Z",
+  "source": "GitHub REST API, collected and stored locally by RepoVantage",
+  "total_repositories": 15,
+  "candidate_list": "data/manifests/featured-v1-candidates.json",
+  "rules_version": "featured-v1-reviewed",
+  "quality": "complete",
+  "coverage_summary": {
+    "commits": 15,
+    "issues": 15,
+    "pulls": 15,
+    "releases": 15
+  },
+  "warnings": [],
+  "limitations": [
+    "数据仅覆盖各记录明确标注的观测窗口，不代表 GitHub 全部历史。",
+    "精选集合是人工选择案例，不是 GitHub 全体的随机样本。"
+  ]
+}
