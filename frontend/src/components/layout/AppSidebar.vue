@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { FlaskConical, FolderGit2, GitCompare, LayoutDashboard } from 'lucide-vue-next'
+import { FlaskConical, FolderGit2, GitCompareArrows, LayoutDashboard } from 'lucide-vue-next'
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysis'
@@ -13,7 +13,7 @@ const { data: repositories } = useAsyncData(() => useDataSource().listRepositori
 const nav = [
   { key: 'overview', label: '总览', to: '/', icon: LayoutDashboard },
   { key: 'repositories', label: '仓库', to: '/repositories', icon: FolderGit2 },
-  { key: 'compare', label: '项目比较', to: '/compare', icon: GitCompare },
+  { key: 'compare', label: '项目比较', to: '/compare', icon: GitCompareArrows },
   { key: 'research', label: '研究分析', to: '/research', icon: FlaskConical },
 ]
 const recent = computed(() =>
@@ -27,8 +27,12 @@ const recent = computed(() =>
 <template>
   <aside class="sticky top-0 hidden h-screen w-[224px] shrink-0 flex-col border-r border-line bg-panel px-3 py-[18px] lg:flex">
     <div class="flex h-[38px] items-center gap-2.5 px-1.5">
-      <span class="grid size-6 place-items-center rounded-md bg-ink text-bg">
-        <FolderGit2 :size="14" />
+      <span class="relative grid size-6 shrink-0 place-items-center overflow-hidden">
+        <img
+          src="/repovantage-icon.png"
+          alt=""
+          class="absolute left-1/2 top-1/2 size-11 max-w-none -translate-x-1/2 -translate-y-1/2 object-contain"
+        />
       </span>
       <div class="leading-tight">
         <b class="text-[14.5px] font-semibold">RepoVantage</b>
