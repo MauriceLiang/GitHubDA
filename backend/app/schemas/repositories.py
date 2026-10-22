@@ -107,3 +107,7 @@ class ComparisonRequest(DTO):
         if len(set(values)) != len(values):
             raise ValueError("repository_ids must be unique")
         return values
+
+
+class InsightsComparisonRequest(ComparisonRequest):
+    mode: Literal["same_period", "individual_periods"] = "same_period"

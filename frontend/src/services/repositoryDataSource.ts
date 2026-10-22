@@ -1,5 +1,5 @@
 import type {
-  CollectionSettings, CommitActivityPage, ComparisonBundle, Granularity, ReleaseDetails, RepositoryAnalysis, RepositorySummary,
+  CollectionSettings, CommitActivityPage, ComparisonBundle, ComparisonMode, Granularity, ReleaseDetails, RepositoryAnalysis, RepositorySummary,
   IssueOnlineDetail, IssueRecordDetail, IssueRecordPage, PullRequestActivityDetail, PullRequestActivityPage, PullRequestOnlineDetail, ResearchDataset, TaskItem, TimeWindow,
 } from './types'
 
@@ -14,6 +14,8 @@ export interface RepositoryDataSource {
   saveCollectionSettings(settings: CollectionSettings): Promise<CollectionSettings>
 
   listRepositories(): Promise<RepositorySummary[]>
+  /** Percent change in commits across two complete four-week windows; null when unavailable or the baseline is zero. */
+  getActivityChangePercent(id: string): Promise<number | null>
   searchRepositories(query: string): Promise<(RepositorySummary & { alreadyInLibrary: boolean })[]>
   addRepository(input: string): Promise<{ repositoryId: string; taskId: string | null; existing: boolean }>
   removeRepository(id: string): Promise<void>
@@ -37,14 +39,14 @@ export interface RepositoryDataSource {
   exportPullRequestRecords(id: string, search: string): Promise<Blob>
   getReleaseDetails(repositoryId: string, releaseId: string): Promise<ReleaseDetails>
 
-  /** 2–5 repositories compared with a shared window and definitions. */
-  getComparison(ids: string[], window: TimeWindow): Promise<ComparisonBundle>
+  /** Compare 2–5 repositories using a shared period or each repository's own complete period. */
+  getComparison(ids: string[], window: TimeWindow, mode: ComparisonMode): Promise<ComparisonBundle>
 
   getResearchDataset(id?: string): Promise<ResearchDataset>
 
   listTasks(): Promise<TaskItem[]>
   retryTask(id: string): Promise<string>
   exportInsights(id: string): Promise<Blob>
-  exportComparison(ids: string[]): Promise<Blob>
+  exportComparison(ids: string[], mode: ComparisonMode): Promise<Blob>
   exportRepositories(scope: 'library' | 'research', datasetId?: string): Promise<Blob>
 }

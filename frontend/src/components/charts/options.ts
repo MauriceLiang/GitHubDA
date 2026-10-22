@@ -177,7 +177,7 @@ export function timelineOption(releases: ReleaseRecord[], t: ChartTheme, compact
 }
 
 export function comparisonOption(entries: { label: string; color: string; points: TimePoint[] }[], t: ChartTheme): EChartsOption {
-  const dates = entries[0]?.points.map((p) => p.date) ?? []
+  const dates = [...new Set(entries.flatMap((entry) => entry.points.map((point) => point.date)))].sort()
   return {
     animation: false,
     grid: { left: 44, right: 12, top: 12, bottom: 46 },

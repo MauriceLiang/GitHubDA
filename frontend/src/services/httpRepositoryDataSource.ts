@@ -1,5 +1,5 @@
 import type {
-  CollectionSettings, CommitActivityPage, CommitEvent, ComparisonBundle, ComparisonEntry, Coverage, Granularity, HistogramResult, ReleaseDetails, ReleaseRecord,
+  CollectionSettings, CommitActivityPage, CommitEvent, ComparisonBundle, ComparisonEntry, ComparisonMode, Coverage, Granularity, HistogramResult, ReleaseDetails, ReleaseRecord,
   IssueOnlineDetail, IssueRecordDetail, IssueRecordPage, Metric, Observation, PullRequestActivityDetail, PullRequestActivityPage, PullRequestOnlineDetail, RepositoryAnalysis, RepositoryStatus, RepositorySummary,
   ResearchDataset, ResearchGroup, ResearchScatterPoint, TaskItem, TaskStatus, TimePoint, TimeWindow,
 } from './types'
@@ -244,6 +244,16 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
   async listRepositories(): Promise<RepositorySummary[]> {
     const result = await data<{ items: Record<string, any>[] }>('/library/repositories?sort=last_collected&order=desc&per_page=100')
     return result.items.map((item) => mapRepository(item))
+  }
+
+  async getActivityChangePercent(id: string): Promise<number | null> {
+    const result = await data<Record<string, any>>(`/repositories/${repositoryId(id)}/insights`)
+    const commit = object(object(result.insights).commit_activity)
+    const quality = object(commit.quality)
+    const recent = numberOrNull(commit.recent_4w)
+    const previous = numberOrNull(commit.previous_4w)
+    const change = numberOrNull(commit.change_rate_pct)
+    return quality.status === 'ready' && recent !== null && previous !== null ? change : null
   }
 
   async searchRepositories(query: string): Promise<(RepositorySummary & { alreadyInLibrary: boolean })[]> {
@@ -575,11 +585,11 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
     }
   }
 
-  async getComparison(ids: string[], _window: TimeWindow): Promise<ComparisonBundle> {
+  async getComparison(ids: string[], _window: TimeWindow, mode: ComparisonMode): Promise<ComparisonBundle> {
     const repositoryIds = ids.map(repositoryId)
     const result = await data<Record<string, any>>('/comparisons/insights', {
       method: 'POST',
-      body: JSON.stringify({ repository_ids: repositoryIds, depth: 'deep' }),
+      body: JSON.stringify({ repository_ids: repositoryIds, depth: 'deep', mode }),
     })
     const colors = ['#E2683C', '#CE3F7C', '#2E8FCB', '#E5A03A', '#3B5BDB']
     const entries: ComparisonEntry[] = array(result.repositories).map((row, index) => {
@@ -597,10 +607,14 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
         points,
         coverage: qualityStatus === 'ready' ? { state: 'complete', label: '完整覆盖' } : qualityStatus === 'missing' ? { state: 'missing', label: '未采集' } : { state: 'partial', label: qualityStatus === 'insufficient_samples' ? '样本不足' : '部分覆盖' },
         collectedAt: shortDate(row.analyzed_at) ?? '—',
+        windowStart: shortDate(row.window_start),
+        windowEnd: shortDate(row.window_end),
         issueP50: numberOrNull(issueMetric.value) === null ? null : Number((issueMetric.value / 24).toFixed(1)),
         issueSample: Number(issueMetric.valid_samples ?? 0),
+        issueQuality: String(issueMetric.quality ?? 'missing'),
         prP50: numberOrNull(prMetric.value) === null ? null : Number((prMetric.value / 24).toFixed(1)),
         prSample: Number(prMetric.valid_samples ?? 0),
+        prQuality: String(prMetric.quality ?? 'missing'),
         releaseMedianDays: numberOrNull(releaseMetric.value),
       }
     })
@@ -609,6 +623,7 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
     return {
       window: { start: dates[0] ?? '—', end: dates[dates.length - 1] ?? '—' },
       entries,
+      mode,
       notes: Array.isArray(result.warnings) ? result.warnings.map(String) : [],
     }
   }
@@ -728,8 +743,8 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
     return csv(`/repositories/${repositoryId(id)}/pull-requests/export.csv${query}`)
   }
 
-  exportComparison(ids: string[]): Promise<Blob> {
-    const params = new URLSearchParams({ repository_ids: ids.map(repositoryId).join(','), depth: 'deep' })
+  exportComparison(ids: string[], mode: ComparisonMode): Promise<Blob> {
+    const params = new URLSearchParams({ repository_ids: ids.map(repositoryId).join(','), depth: 'deep', mode })
     return csv(`/exports/comparison.csv?${params}`)
   }
 
