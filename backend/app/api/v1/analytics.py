@@ -8,7 +8,7 @@ from backend.app.api.helpers import envelope
 from backend.app.core.exceptions import AppError
 from backend.app.schemas.analytics import ComparisonResponse, DataQualityResponse, OverviewResponse, StatisticsResponse
 from backend.app.schemas.common import SuccessEnvelope
-from backend.app.schemas.repositories import ComparisonRequest
+from backend.app.schemas.repositories import ComparisonRequest, InsightsComparisonRequest
 from backend.app.services.analytics import compare_repositories, data_quality, overview, research_statistics
 
 
@@ -42,9 +42,9 @@ def compare(request: Request, body: ComparisonRequest, session: Session = Depend
 
 
 @router.post("/comparisons/insights")
-def compare_activity_insights(request: Request, body: ComparisonRequest, session: Session = Depends(get_session)):
+def compare_activity_insights(request: Request, body: InsightsComparisonRequest, session: Session = Depends(get_session)):
     from backend.app.services.insight_comparison import compare_insights
-    return envelope(request, compare_insights(session, body.repository_ids))
+    return envelope(request, compare_insights(session, body.repository_ids, body.mode))
 
 
 @router.get("/research/insights")

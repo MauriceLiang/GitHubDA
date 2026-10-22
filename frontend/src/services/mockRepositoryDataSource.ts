@@ -1,7 +1,7 @@
 import type {
   AuthorContribution, CommitActivityPage, CommitEvent, ComparisonBundle, ComparisonEntry, Granularity, HistogramResult,
   IssueOnlineDetail, IssueRecord, IssueRecordDetail, IssueRecordPage, Metric, PullRequestActivityDetail, PullRequestActivityRecord, PullRequestActivityPage, PullRequestOnlineDetail, PullRequestRecord, ReleaseDetails, ReleaseRecord, RepositoryAnalysis, RepositorySummary,
-  ResearchDataset, TaskItem, TimePoint, TimeSeriesResult, TimeWindow,
+  ComparisonMode, ResearchDataset, TaskItem, TimePoint, TimeSeriesResult, TimeWindow,
 } from './types'
 import type { RepositoryDataSource } from './repositoryDataSource'
 import { addDays, addWeeks, iso, REPOSITORIES, repoSeed, type RepoSeed } from '@/mocks/catalog'
@@ -243,6 +243,10 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
 
   async listRepositories(): Promise<RepositorySummary[]> {
     return REPOSITORIES.map(summaryOf)
+  }
+
+  async getActivityChangePercent(id: string): Promise<number | null> {
+    return repoSeed(id)?.activityDelta ?? null
   }
 
   async getAnalysis(id: string, window: TimeWindow, granularity: Granularity): Promise<RepositoryAnalysis> {
@@ -504,31 +508,55 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
     }))
   }
 
-  async getComparison(ids: string[], window: TimeWindow): Promise<ComparisonBundle> {
-    const entries: ComparisonEntry[] = ids.map((id, i) => {
+  async getComparison(ids: string[], window: TimeWindow, mode: ComparisonMode): Promise<ComparisonBundle> {
+    let entries: ComparisonEntry[] = ids.map((id, i) => {
       const seed = repoSeed(id) ?? REPOSITORIES[0]
       const points = weeklyPoints(seed, window)
-      const isPartial = seed.coverage.state !== 'complete'
+      const observationWindow = windowRange(seed, window)
+      const issueQuality = seed.issueSample < 10 ? 'insufficient_samples' : seed.issueCoverage.state === 'complete' ? 'ready' : seed.issueCoverage.state === 'missing' ? 'missing' : 'partial'
+      const prQuality = seed.prSample < 10 ? 'insufficient_samples' : seed.coverage.state === 'complete' ? 'ready' : seed.coverage.state === 'missing' ? 'missing' : 'partial'
       return {
         id,
         label: seed.fullName,
         color: seriesColor[i % seriesColor.length],
-        points: isPartial ? points : points,
+        points,
         coverage: coverageFor(seed, window),
         collectedAt: `${seed.lastAnalyzedAt ?? DATASET_END}`,
-        issueP50: seed.issueSample >= 10 ? seed.issueP50 : null,
+        windowStart: observationWindow.start,
+        windowEnd: observationWindow.end,
+        issueP50: issueQuality === 'ready' ? seed.issueP50 : null,
         issueSample: seed.issueSample,
-        prP50: seed.prSample >= 10 ? seed.prP50 : null,
+        issueQuality,
+        prP50: prQuality === 'ready' ? seed.prP50 : null,
         prSample: seed.prSample,
+        prQuality,
         releaseMedianDays: seed.releases.find((release) => release.intervalDays !== null)?.intervalDays ?? null,
       }
     })
+    const sameObservationWindow = entries.every((entry) => entry.windowStart === entries[0]?.windowStart && entry.windowEnd === entries[0]?.windowEnd)
+    if (mode === 'same_period') {
+      const commonWeeks = new Set(entries[0]?.points.map((point) => point.date) ?? [])
+      entries.slice(1).forEach((entry) => {
+        const ownWeeks = new Set(entry.points.map((point) => point.date))
+        for (const week of commonWeeks) if (!ownWeeks.has(week)) commonWeeks.delete(week)
+      })
+      entries = entries.map((entry) => ({
+        ...entry,
+        points: entry.points.filter((point) => commonWeeks.has(point.date)),
+        issueP50: sameObservationWindow ? entry.issueP50 : null,
+        prP50: sameObservationWindow ? entry.prP50 : null,
+        releaseMedianDays: sameObservationWindow ? entry.releaseMedianDays : null,
+      }))
+    }
     return {
       window: { start: iso(new Date(END - window * DAY)), end: DATASET_END },
       entries,
+      mode,
       notes: [
+        ...(mode === 'same_period' && !sameObservationWindow ? ['仓库观察窗口不一致；Issue、PR 与发布间隔暂不按同期口径比较。'] : []),
+        ...(mode === 'individual_periods' ? ['各仓库分别使用自身完整周与可用指标；观察窗口可能不同，不代表同期对比。'] : []),
         '各仓库采集时间与覆盖状态不同，差异可能来自采集而非项目本身。',
-        '缺乏有效样本的指标显示为「—」，不参与排名。',
+        '缺乏有效样本或无法按当前口径比较的指标显示为「—」。',
       ],
     }
   }
@@ -604,7 +632,14 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
 
   async retryTask(): Promise<string> { return 'mock-task-retry' }
   async exportInsights(): Promise<Blob> { return new Blob(['demo export'], { type: 'text/csv' }) }
-  async exportComparison(): Promise<Blob> { return new Blob(['demo export'], { type: 'text/csv' }) }
+  async exportComparison(ids: string[], mode: ComparisonMode): Promise<Blob> {
+    const { entries } = await this.getComparison(ids, 90, mode)
+    const cells = [
+      ['repository', 'comparison_mode', 'observation_window', 'complete_weeks', 'weekly_commit_mean', 'issue_p50_days', 'issue_samples', 'pr_p50_days', 'pr_samples', 'release_interval_p50_days'],
+      ...entries.map((entry) => [entry.label, mode, `${entry.windowStart ?? '—'} 至 ${entry.windowEnd ?? '—'}`, entry.points.length, entry.points.length ? entry.points.reduce((sum, point) => sum + (point.value ?? 0), 0) / entry.points.length : '', entry.issueP50 ?? '', entry.issueSample, entry.prP50 ?? '', entry.prSample, entry.releaseMedianDays ?? '']),
+    ]
+    return new Blob(['\ufeff', cells.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' })
+  }
   async exportRepositories(): Promise<Blob> { return new Blob(['demo export'], { type: 'text/csv' }) }
 }
 

@@ -289,6 +289,8 @@ export interface RepositoryAnalysis {
   observations: Observation[]
 }
 
+export type ComparisonMode = 'same_period' | 'individual_periods'
+
 export interface ComparisonEntry {
   id: string
   label: string
@@ -296,15 +298,20 @@ export interface ComparisonEntry {
   points: TimePoint[]
   coverage: Coverage
   collectedAt: string
+  windowStart: string | null
+  windowEnd: string | null
   issueP50: number | null
   issueSample: number
+  issueQuality: string
   prP50: number | null
   prSample: number
+  prQuality: string
   releaseMedianDays: number | null
 }
 
 export interface ComparisonBundle {
   window: { start: string; end: string }
+  mode: ComparisonMode
   entries: ComparisonEntry[]
   notes: string[]
 }
