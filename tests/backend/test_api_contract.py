@@ -232,3 +232,16 @@ def test_all_v1_routes_are_present_in_openapi():
     }
     assert expected <= set(paths)
     assert paths["/api/v1/github/search"]["get"]["responses"]["422"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/ErrorResponse"
+
+
+def test_analysis_window_contract_and_invalid_comparison_ranges(backend_client):
+    client, _factory, _github = backend_client
+    schema = client.get("/openapi.json").json()
+    window = schema["components"]["schemas"]["InsightsComparisonRequest"]["properties"]["window_days"]
+    assert window["enum"] == [30, 90, 180]
+    assert window["default"] == 90
+    for days in (0, 60, 181):
+        response = client.post("/api/v1/comparisons/insights", json={"repository_ids": [321, 322], "window_days": days}, headers=HEADERS)
+        assert response.status_code == 422
+        exported = client.get(f"/api/v1/exports/comparison.csv?repository_ids=321,322&mode=same_period&window_days={days}", headers=HEADERS)
+        assert exported.status_code == 422

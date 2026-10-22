@@ -421,10 +421,10 @@ def test_comparison_windows_and_research_dataset_isolation(backend_client):
         persist_insights(session, 123, 'one', fixture(), sources, START, END, [])
         persist_insights(session, 124, 'two', fixture(), sources, START + timedelta(days=1), END + timedelta(days=1), [])
         session.commit()
-    response = client.post('/api/v1/comparisons/insights', json={'repository_ids': [123, 124], 'depth': 'deep'}, headers=HEADERS)
+    response = client.post('/api/v1/comparisons/insights', json={'repository_ids': [123, 124], 'depth': 'deep', 'window_days': 30}, headers=HEADERS)
     assert response.status_code == 200, response.text
     value = response.json()['data']
-    assert value['common_complete_weeks'] == 7
+    assert value['common_complete_weeks'] == 4
     assert value['repositories'][0]['metrics']['issue_median_hours']['value'] is None
     comparison_weeks = [point['start'] for point in value['repositories'][0]['weekly_commits']]
     assert len(comparison_weeks) == value['common_complete_weeks']

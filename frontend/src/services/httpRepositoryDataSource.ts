@@ -672,11 +672,11 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
     }
   }
 
-  async getComparison(ids: string[], _window: TimeWindow, mode: ComparisonMode): Promise<ComparisonBundle> {
+  async getComparison(ids: string[], window: TimeWindow, mode: ComparisonMode): Promise<ComparisonBundle> {
     const repositoryIds = ids.map(repositoryId)
     const result = await data<Record<string, any>>('/comparisons/insights', {
       method: 'POST',
-      body: JSON.stringify({ repository_ids: repositoryIds, depth: 'deep', mode }),
+      body: JSON.stringify({ repository_ids: repositoryIds, depth: 'deep', mode, window_days: window }),
     })
     const colors = ['#E2683C', '#CE3F7C', '#2E8FCB', '#E5A03A', '#3B5BDB']
     const entries: ComparisonEntry[] = array(result.repositories).map((row, index) => {
@@ -696,6 +696,8 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
         collectedAt: shortDate(row.analyzed_at) ?? '—',
         windowStart: shortDate(row.window_start),
         windowEnd: shortDate(row.window_end),
+        windowAvailable: row.window_available === true,
+        windowReason: textOrNull(row.window_reason),
         issueP50: numberOrNull(issueMetric.value) === null ? null : Number((issueMetric.value / 24).toFixed(1)),
         issueSample: Number(issueMetric.valid_samples ?? 0),
         issueQuality: String(issueMetric.quality ?? 'missing'),
@@ -709,6 +711,7 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
     const dates = points.map((point) => point.date).sort()
     return {
       window: { start: dates[0] ?? '—', end: dates[dates.length - 1] ?? '—' },
+      requestedWindowDays: result.requested_window_days,
       entries,
       mode,
       notes: Array.isArray(result.warnings) ? result.warnings.map(String) : [],
@@ -856,8 +859,8 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
     return csv(`/repositories/${repositoryId(id)}/pull-requests/export.csv${query}`)
   }
 
-  exportComparison(ids: string[], mode: ComparisonMode): Promise<Blob> {
-    const params = new URLSearchParams({ repository_ids: ids.map(repositoryId).join(','), depth: 'deep', mode })
+  exportComparison(ids: string[], windowDays: TimeWindow, mode: ComparisonMode): Promise<Blob> {
+    const params = new URLSearchParams({ repository_ids: ids.map(repositoryId).join(','), depth: 'deep', mode, window_days: String(windowDays) })
     return csv(`/exports/comparison.csv?${params}`)
   }
 

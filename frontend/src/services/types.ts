@@ -311,6 +311,8 @@ export interface ComparisonEntry {
   collectedAt: string
   windowStart: string | null
   windowEnd: string | null
+  windowAvailable: boolean
+  windowReason: string | null
   issueP50: number | null
   issueSample: number
   issueQuality: string
@@ -321,6 +323,7 @@ export interface ComparisonEntry {
 }
 
 export interface ComparisonBundle {
+  requestedWindowDays: TimeWindow
   window: { start: string; end: string }
   mode: ComparisonMode
   entries: ComparisonEntry[]

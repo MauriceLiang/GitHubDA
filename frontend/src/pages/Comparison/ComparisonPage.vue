@@ -10,7 +10,7 @@ import GdCoverageNote from '@/components/ui/GdCoverageNote.vue'
 import { useAsyncData } from '@/composables/useAsyncData'
 import { useDataSource } from '@/composables/useDataSource'
 import { downloadBlob } from '@/lib/download'
-import type { ComparisonMode } from '@/services/types'
+import type { ComparisonMode, TimeWindow } from '@/services/types'
 import { useAnalysisStore } from '@/stores/analysis'
 import { useUiStore } from '@/stores/ui'
 import GdSegmented from '@/components/ui/GdSegmented.vue'
@@ -20,6 +20,8 @@ const analysis = useAnalysisStore()
 const source = useDataSource()
 const exporting = ref(false)
 const comparisonMode = ref<ComparisonMode>('same_period')
+const windowOptions = [30, 90, 180].map((value) => ({ value, label: `${value} 天` }))
+const setWindow = (value: string | number) => analysis.setWindow(value as TimeWindow)
 const comparisonModeOptions = [
   { value: 'same_period', label: '同期对比', hint: '只比较共同完整周；耗时和发布间隔要求分析窗口一致。' },
   { value: 'individual_periods', label: '各自窗口', hint: '分别使用各仓库自身完整周和可用指标，时间范围可能不同。' },
@@ -34,8 +36,8 @@ function setComparisonMode(value: string | number) {
 const { data, loading, error } = useAsyncData(
   () => analysis.compareIds.length >= 2
     ? source.getComparison(analysis.compareIds, analysis.timeWindow, comparisonMode.value)
-    : Promise.resolve({ window: { start: '—', end: '—' }, mode: comparisonMode.value, entries: [], notes: [] }),
-  () => [analysis.compareIds.join(','), comparisonMode.value],
+    : Promise.resolve({ window: { start: '—', end: '—' }, requestedWindowDays: analysis.timeWindow, mode: comparisonMode.value, entries: [], notes: [] }),
+  () => [analysis.compareIds.join(','), comparisonMode.value, analysis.timeWindow],
 )
 
 const canCompare = computed(() => analysis.compareIds.length >= 2)
@@ -61,7 +63,7 @@ const entryWindow = (entry: (typeof entries.value)[number]) => entry.windowStart
 async function exportComparison() {
   exporting.value = true
   try {
-    downloadBlob(await source.exportComparison(analysis.compareIds, comparisonMode.value), 'repovantage-comparison.csv')
+    downloadBlob(await source.exportComparison(analysis.compareIds, analysis.timeWindow, comparisonMode.value), 'repovantage-comparison.csv')
   } catch (cause) {
     ui.toast(cause instanceof Error ? cause.message : '导出比较结果失败')
   } finally {
@@ -78,6 +80,7 @@ async function exportComparison() {
         <p class="mt-1.5 text-muted">选择时间口径后比较活跃度、处理耗时与发布节奏</p>
       </div>
       <div v-if="canCompare" class="flex flex-wrap items-center gap-2">
+        <GdSegmented :model-value="analysis.timeWindow" :options="windowOptions" aria-label="比较时间范围" data-testid="comparison-window" @update:model-value="setWindow" />
         <GdSegmented :model-value="comparisonMode" :options="comparisonModeOptions" size="md" aria-label="选择对比方式" @update:model-value="setComparisonMode" />
         <GdButton variant="outline" :disabled="exporting" @click="exportComparison"><Download :size="14" /> {{ exporting ? '正在导出…' : '导出报告数据' }}</GdButton>
       </div>
@@ -91,7 +94,12 @@ async function exportComparison() {
 
     <template v-else>
 
-    <p class="-mt-2 text-[11.5px] text-muted">{{ comparisonModeDescription }}</p>
+    <p class="-mt-2 text-[11.5px] text-muted" data-testid="comparison-description" :data-window-days="data?.requestedWindowDays">{{ analysis.timeWindow }} 天 · {{ comparisonModeDescription }}</p>
+
+    <div v-for="entry in entries.filter((item) => !item.windowAvailable)" :key="entry.id" class="rounded-md bg-warnbg px-3 py-2 text-[12px] text-warnfg" data-testid="comparison-window-unavailable">
+      {{ entry.label }}：{{ entry.windowReason ?? '所选范围未覆盖' }}
+      <RouterLink :to="`/repositories/${entry.id}/overview`" class="gd-link ml-2">前往按所选范围采集</RouterLink>
+    </div>
 
     <div class="flex flex-wrap gap-2">
       <span v-for="entry in entries" :key="entry.id" class="inline-flex items-center gap-1.5 rounded-md border border-line bg-panel px-2.5 py-1.5 text-[12px]">
@@ -113,7 +121,7 @@ async function exportComparison() {
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 class="m-0 text-[15.5px] font-semibold">开发活动对比</h3>
-          <p class="mt-0.5 text-[12px] text-muted">每周提交数 · {{ data?.window.start }} 至 {{ data?.window.end }}{{ comparisonMode === 'individual_periods' ? ' · 各仓库独立窗口' : ' · 共同完整周' }}</p>
+          <p class="mt-0.5 text-[12px] text-muted">每周提交数 · {{ analysis.timeWindow }} 天 · {{ data?.window.start }} 至 {{ data?.window.end }}{{ comparisonMode === 'individual_periods' ? ' · 各仓库独立窗口' : ' · 共同完整周' }}；Release 固定近 365 天</p>
         </div>
         <div class="flex flex-wrap items-center gap-3 text-[11px] text-muted">
           <span v-for="entry in entries" :key="entry.id" class="flex items-center gap-1">
@@ -191,7 +199,7 @@ async function exportComparison() {
             <td class="border-b border-line px-2.5 py-2.5 font-mono">{{ entry.prP50 === null ? '—' : `${entry.prP50} 天` }}</td>
             <td class="border-b border-line px-2.5 py-2.5 font-mono">{{ entry.releaseMedianDays === null ? '—' : `${entry.releaseMedianDays.toLocaleString('en-US', { maximumFractionDigits: 1 })} 天` }}</td>
             <td class="border-b border-line px-2.5 py-2.5">
-              <GdBadge :variant="entry.coverage.state === 'complete' ? 'default' : 'warn'">{{ entry.coverage.label }}</GdBadge>
+              <GdBadge :variant="entry.coverage.state === 'complete' ? 'default' : 'warn'">{{ entry.windowAvailable ? entry.coverage.label : '范围未覆盖' }}</GdBadge>
             </td>
             <td class="border-b border-line px-2.5 py-2.5 font-mono text-muted">{{ entryWindow(entry) }}</td>
             <td class="border-b border-line px-2.5 py-2.5 font-mono text-muted">{{ entry.collectedAt }}</td>

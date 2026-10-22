@@ -32,8 +32,11 @@ def export_comparison_csv(
     repository_ids: str = Query(min_length=3, max_length=40),
     depth: Literal["basic", "deep"] = "basic",
     mode: Literal["same_period", "individual_periods"] | None = None,
+    window_days: int = Query(default=90),
     session: Session = Depends(get_session),
 ):
+    if window_days not in {30, 90, 180}:
+        raise AppError(422, "VALIDATION_ERROR", "分析范围只支持 30、90 或 180 天")
     try:
         ids = [int(value) for value in repository_ids.split(",")]
     except ValueError as exc:
@@ -51,8 +54,8 @@ def export_comparison_csv(
             writer.writerow([repo["full_name"], metrics.get("stars"), metrics.get("forks"), metrics.get("age_days"), metrics.get("commits_90d"), metrics.get("issues_closed_90d"), metrics.get("pr_merged_90d"), metrics.get("release_count_365d"), repo["coverage"]])
     else:
         from backend.app.services.insight_comparison import compare_insights
-        comparison = compare_insights(session, ids, mode)
-        writer.writerow(["仓库", "对比方式", "分析窗口", "完整周数", "每周提交均值", "Issue 关闭耗时 P50（天）", "Issue 有效样本", "PR 合并耗时 P50（天）", "PR 有效样本", "Release 间隔 P50（天）", "Commit 覆盖", "采集时间"])
+        comparison = compare_insights(session, ids, mode, window_days)
+        writer.writerow(["仓库", "对比方式", "分析窗口", "完整周数", "每周提交均值", "Issue 关闭耗时 P50（天）", "Issue 有效样本", "PR 合并耗时 P50（天）", "PR 有效样本", "Release 间隔 P50（天）", "Commit 覆盖", "采集时间", "所选窗口天数", "窗口开始", "窗口结束", "窗口可用", "范围缺失原因"])
         mode_label = "同期对比" if mode == "same_period" else "各自窗口"
         for repo in comparison["repositories"]:
             metrics = repo["metrics"]
@@ -67,6 +70,7 @@ def export_comparison_csv(
                 issue_metric["valid_samples"],
                 round(pr_metric["value"] / 24, 1) if pr_metric["value"] is not None else None,
                 pr_metric["valid_samples"], release_metric["value"], commit_metric["quality"], repo["analyzed_at"],
+                window_days, repo["window_start"], repo["window_end"], repo["window_available"], repo["window_reason"],
             ])
     content = "\ufeff" + output.getvalue()
     filename = f"repovantage_comparison_{date.today().isoformat()}.csv"
