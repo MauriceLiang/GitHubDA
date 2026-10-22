@@ -121,7 +121,7 @@ python -m scripts.export_dataset_bundle data/datasets/featured-v1 --output data/
 python -m scripts.import_dataset_bundle data/datasets/featured-v1.zip
 ```
 
-打包器要求 `featured-default` 恰有 15 个已审核成员，且本地具备快照和分析数据；不会生成虚构的演示记录。仓库页的“导入精选仓库”按钮只读取校验通过的本地目录，不触发 GitHub 请求；“下载数据包”按钮通过 `GET /api/v1/datasets/featured/export` 下载与该目录校验一致的 ZIP。精选数据集状态由 `GET /api/v1/datasets/featured/status` 提供，导入由 `POST /api/v1/datasets/featured/import` 执行。
+打包器要求 `featured-default` 恰有 15 个已审核成员，且本地具备快照和分析数据；不会生成虚构的演示记录。仓库页的“导入精选仓库”按钮只读取校验通过的本地目录，不触发 GitHub 请求。`POST /api/v1/datasets/featured/import` 会返回 `202` 和持久化任务 ID；本地 Worker 校验并分批暂存数据，再在一个事务中合并正式数据和完成状态。可通过 `/api/v1/tasks`、`/api/v1/tasks/{task_id}` 查询导入与仓库采集任务；失败的精选数据导入可从任务中心重试。`GET /api/v1/datasets/featured/status` 返回轻量包状态、已导入版本和当前任务，不会在每次轮询时解压并全量解析 JSONL。导入任务不会创建 GitHub 客户端或消耗 API 配额。“下载数据包”按钮通过 `GET /api/v1/datasets/featured/export` 下载与该目录校验一致的 ZIP。
 
 ## 验证与诊断
 

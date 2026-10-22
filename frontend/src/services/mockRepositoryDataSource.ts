@@ -1,7 +1,7 @@
 import type {
   AuthorContribution, CommitActivityPage, CommitEvent, ComparisonBundle, ComparisonEntry, Granularity, HistogramResult,
   IssueOnlineDetail, IssueRecord, IssueRecordDetail, IssueRecordPage, Metric, PullRequestActivityDetail, PullRequestActivityRecord, PullRequestActivityPage, PullRequestOnlineDetail, PullRequestRecord, ReleaseDetails, ReleaseRecord, RepositoryAnalysis, RepositorySummary,
-  ComparisonMode, ResearchDataset, TaskItem, TimePoint, TimeSeriesResult, TimeWindow,
+  ComparisonMode, FeaturedDatasetTaskSummary, ResearchDataset, TaskItem, TimePoint, TimeSeriesResult, TimeWindow,
 } from './types'
 import type { RepositoryDataSource } from './repositoryDataSource'
 import { addDays, addWeeks, iso, REPOSITORIES, repoSeed, type RepoSeed } from '@/mocks/catalog'
@@ -213,6 +213,76 @@ const COMMIT_TITLES = ['feat: 周聚合改为事件日期', 'fix: 排除 PR 类�
 
 export class MockRepositoryDataSource implements RepositoryDataSource {
   private githubMaxPages = 10
+  private featuredImport: { taskId: string; startedAt: number; retryOf: string | null } | null = null
+
+  private startFeaturedImport(retryOf: string | null) {
+    this.featuredImport = {
+      taskId: `mock-featured-import-${Date.now()}`,
+      startedAt: Date.now(),
+      retryOf,
+    }
+  }
+
+  private featuredImportSummary(): FeaturedDatasetTaskSummary | null {
+    if (!this.featuredImport) return null
+    const elapsed = (Date.now() - this.featuredImport.startedAt) / 1000
+    const status: FeaturedDatasetTaskSummary['status'] = elapsed < 0.8 ? 'queued' : elapsed < 9 ? 'running' : 'succeeded'
+    const phase = status === 'queued' ? 'validating'
+      : elapsed < 2.5 ? 'validating'
+        : elapsed < 7 ? 'staging'
+          : elapsed < 9 ? 'importing' : null
+    const progressPercent = status === 'succeeded' ? 100 : phase === 'staging' ? Math.min(90, Math.max(0, Math.floor((elapsed - 2.5) / 4.5 * 90))) : null
+    const totalRecords = 22_400
+    const processedRecords = status === 'succeeded' ? totalRecords : phase === 'staging' ? Math.floor(totalRecords * (progressPercent ?? 0) / 90) : 0
+    const finishedAt = status === 'succeeded' ? new Date(this.featuredImport.startedAt + 9_000).toISOString() : null
+    return {
+      taskId: this.featuredImport.taskId,
+      status,
+      phase,
+      progressPercent,
+      progressKind: phase === 'staging' || status === 'succeeded' ? 'records' : 'indeterminate',
+      processedRecords,
+      totalRecords,
+      currentFile: phase === 'staging' ? 'events/commits.jsonl.gz' : null,
+      message: status === 'queued' ? '等待导入 Worker' : phase === 'validating' ? '正在校验精选数据包' : phase === 'staging' ? '正在暂存精选数据' : phase === 'importing' ? '正在写入本地分析库' : '精选数据导入完成',
+      errorCode: null,
+      errorMessage: null,
+      createdAt: new Date(this.featuredImport.startedAt).toISOString(),
+      updatedAt: new Date(Math.min(Date.now(), this.featuredImport.startedAt + (status === 'succeeded' ? 9_000 : Math.floor(elapsed / 2) * 2_000))).toISOString(),
+      finishedAt,
+      result: status === 'succeeded' ? { imported_count: 4, already_present_count: 0, event_count: 18_240, skipped_count: 0, warning_count: 0 } : null,
+      retryOf: this.featuredImport.retryOf,
+      version: 'featured-v1.0.0-demo',
+      bundleHash: 'demo-bundle-hash',
+    }
+  }
+
+  private featuredTaskItem(): TaskItem | null {
+    const task = this.featuredImportSummary()
+    if (!task) return null
+    return {
+      id: task.taskId,
+      taskType: 'dataset_import',
+      targetType: 'dataset',
+      targetId: 'featured-default',
+      operation: 'import',
+      repository: '精选仓库数据集',
+      module: 'dataset_import',
+      status: task.status === 'succeeded' ? 'done' : task.status,
+      stage: task.message ?? '精选数据导入',
+      phase: task.phase,
+      progressPercent: task.progressPercent,
+      progressKind: task.progressKind,
+      processedRecords: task.processedRecords,
+      totalRecords: task.totalRecords,
+      currentFile: task.currentFile,
+      result: task.result,
+      retryOf: task.retryOf,
+      version: task.version,
+      updatedAt: task.updatedAt?.slice(0, 10) ?? '刚刚',
+      isDemo: true,
+    }
+  }
 
   async getCollectionSettings() {
     return { githubMaxPages: this.githubMaxPages }
@@ -239,6 +309,10 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
     throw new Error('演示模式不支持修改仓库库')
   }
 
+  async clearRepositoryData(): Promise<void> {
+    throw new Error('演示模式不支持清除仓库数据')
+  }
+
   async refreshRepository(): Promise<string> { return 'mock-task' }
 
   async listRepositories(): Promise<RepositorySummary[]> {
@@ -246,20 +320,38 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
   }
 
   async getFeaturedDatasetStatus() {
+    const latestTask = this.featuredImportSummary()
+    const completed = latestTask?.status === 'succeeded'
     return {
-      available: false,
+      available: true,
       datasetId: 'featured-default',
-      version: null,
-      totalRepositories: 0,
-      importedRepositories: 0,
-      dataAsOf: null,
-      bundleHash: null,
-      reason: '演示数据源不包含可导入的精选数据包。',
+      version: 'featured-v1.0.0-demo',
+      totalRepositories: 4,
+      importedRepositories: completed ? 4 : 0,
+      dataAsOf: '2025-03-31',
+      bundleHash: 'demo-bundle-hash',
+      reason: null,
+      alreadyCurrent: completed,
+      importedVersion: completed ? 'featured-v1.0.0-demo' : null,
+      importedBundleHash: completed ? 'demo-bundle-hash' : null,
+      importedAt: completed ? latestTask?.finishedAt ?? null : null,
+      verificationStatus: completed ? 'verified' as const : 'pending' as const,
+      activeTask: latestTask && (latestTask.status === 'queued' || latestTask.status === 'running') ? latestTask : null,
+      latestTask,
+      isDemo: true,
     }
   }
 
-  async importFeaturedDataset(): Promise<never> {
-    throw new Error('演示数据源不支持精选数据导入')
+  async importFeaturedDataset() {
+    const current = this.featuredImportSummary()
+    if (current?.status === 'queued' || current?.status === 'running') {
+      return { taskId: current.taskId, datasetId: 'featured-default', version: 'featured-v1.0.0-demo', bundleHash: 'demo-bundle-hash', status: current.status, alreadyCurrent: false }
+    }
+    if (current?.status === 'succeeded') {
+      return { taskId: null, datasetId: 'featured-default', version: 'featured-v1.0.0-demo', bundleHash: 'demo-bundle-hash', status: 'succeeded' as const, alreadyCurrent: true }
+    }
+    this.startFeaturedImport(null)
+    return { taskId: this.featuredImport!.taskId, datasetId: 'featured-default', version: 'featured-v1.0.0-demo', bundleHash: 'demo-bundle-hash', status: 'queued' as const, alreadyCurrent: false }
   }
 
   async exportFeaturedDataset(): Promise<never> {
@@ -641,6 +733,7 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
   }
 
   async listTasks(): Promise<TaskItem[]> {
+    const demoImport = this.featuredTaskItem()
     return [
       { id: 't1', repository: 'demo-labs/queue-demo', module: 'commits', status: 'running', stage: '分页拉取 · 已处理 1,200 / 6,800 条', processed: 1200, total: 6800, updatedAt: '刚刚' },
       { id: 't2', repository: 'demo-labs/docs-site', module: 'issues', status: 'queued', stage: '等待前序任务', processed: 0, total: 2400, updatedAt: '刚刚' },
@@ -648,10 +741,18 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
       { id: 't4', repository: 'demo-labs/empty-lite', module: 'releases', status: 'failed', stage: 'GitHub API 速率限制，已采集 3,200 条后暂停', processed: 3200, total: 6300, updatedAt: '32 分钟前', error: 'GitHub API 速率限制' },
       { id: 't5', repository: 'demo-labs/steady-core', module: 'commits', status: 'done', stage: '已完成', processed: 1304, total: 1304, updatedAt: '今天 02:14' },
       { id: 't6', repository: 'demo-labs/tiny-lab', module: 'issues', status: 'analyzing', stage: '统计分位数 · 3 / 7 条', processed: 3, total: 7, updatedAt: '刚刚' },
+      { id: 'mock-featured-failed', taskType: 'dataset_import', targetType: 'dataset', targetId: 'featured-default', repository: '精选仓库数据集', module: 'dataset_import', version: 'featured-v1.0.0-demo', status: 'failed', stage: '演示失败样例：暂存校验未通过', updatedAt: '昨天', error: '演示失败状态，可点击重试', isDemo: true },
+      ...(demoImport ? [demoImport] : []),
     ]
   }
 
-  async retryTask(): Promise<string> { return 'mock-task-retry' }
+  async retryTask(id: string): Promise<string> {
+    if (id === 'mock-featured-failed' || id.startsWith('mock-featured-import-')) {
+      this.startFeaturedImport(id)
+      return this.featuredImport!.taskId
+    }
+    return 'mock-task-retry'
+  }
   async exportInsights(): Promise<Blob> { return new Blob(['demo export'], { type: 'text/csv' }) }
   async exportComparison(ids: string[], mode: ComparisonMode): Promise<Blob> {
     const { entries } = await this.getComparison(ids, 90, mode)

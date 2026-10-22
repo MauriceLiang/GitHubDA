@@ -22,6 +22,7 @@ export interface RepositoryDataSource {
   searchRepositories(query: string): Promise<(RepositorySummary & { alreadyInLibrary: boolean })[]>
   addRepository(input: string): Promise<{ repositoryId: string; taskId: string | null; existing: boolean }>
   removeRepository(id: string): Promise<void>
+  clearRepositoryData(ids: string[], options?: { removeFromLibrary?: boolean }): Promise<void>
   refreshRepository(id: string, scopeKind?: 'quick' | 'window'): Promise<string>
 
   /**

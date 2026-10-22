@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Header, Request, Response
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -9,7 +9,7 @@ from backend.app.api.helpers import envelope
 from backend.app.schemas.analytics import DatasetListResponse
 from backend.app.schemas.common import SuccessEnvelope
 from backend.app.services.analytics import get_datasets
-from backend.app.services.dataset_import import dataset_coverage, featured_bundle_archive, featured_status, import_featured_bundle
+from backend.app.services.dataset_import import dataset_coverage, featured_bundle_archive, featured_status, queue_featured_import
 
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
@@ -25,9 +25,16 @@ def get_featured_status(request: Request, session: Session = Depends(get_session
     return envelope(request, featured_status(session))
 
 
-@router.post("/featured/import", response_model=SuccessEnvelope[dict[str, Any]])
-def import_featured(request: Request, session: Session = Depends(get_session)):
-    return envelope(request, import_featured_bundle(session))
+@router.post("/featured/import", response_model=SuccessEnvelope[dict[str, Any]], status_code=202)
+def import_featured(
+    request: Request,
+    response: Response,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=200),
+    session: Session = Depends(get_session),
+):
+    result = queue_featured_import(session, idempotency_key)
+    response.status_code = 200 if result.get("already_current") else 202
+    return envelope(request, result)
 
 
 @router.get("/featured/export", response_class=FileResponse)

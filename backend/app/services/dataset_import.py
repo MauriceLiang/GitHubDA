@@ -13,7 +13,8 @@ from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterator
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import delete, desc, func, select, tuple_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.app.core.clock import iso_z, parse_github_datetime, utc_now
@@ -24,7 +25,10 @@ from backend.app.persistence.models import (
     ActivityWindow,
     AnalysisResult,
     Dataset,
+    DatasetImportJob,
+    DatasetImportStagingRecord,
     DatasetRepository,
+    ApplicationSetting,
     Repository,
     RepositoryActivityEvent,
     RepositoryInsightRun,
@@ -133,7 +137,7 @@ def verify_dataset_bundle(source: Path) -> dict[str, Any]:
 
 
 def featured_status(session: Session) -> dict[str, Any]:
-    imported = int(session.scalar(select(func.count()).select_from(DatasetRepository).where(DatasetRepository.dataset_id == FEATURED_ID)) or 0)
+    imported = _featured_imported_repository_count(session)
     status: dict[str, Any] = {
         "available": False,
         "dataset_id": FEATURED_ID,
@@ -143,22 +147,275 @@ def featured_status(session: Session) -> dict[str, Any]:
         "data_as_of": None,
         "bundle_hash": None,
         "reason": None,
+        "already_current": False,
+        "imported_version": None,
+        "imported_bundle_hash": None,
+        "imported_at": None,
+        "verification_status": "unknown",
+        "last_verification": None,
+        "active_task": None,
+        "latest_task": None,
     }
-    if not BUNDLE_ROOT.exists():
-        status["reason"] = "内置精选数据包尚未生成。候选清单需先核验，并完成真实数据采集。"
-        return status
-    if not (BUNDLE_ROOT / "dataset.json").is_file() or not (BUNDLE_ROOT / "SHA256SUMS").is_file():
-        status["reason"] = "内置精选数据包尚未生成。候选清单需先核验，并完成真实数据采集。"
-        return status
     try:
-        valid = verify_dataset_bundle(BUNDLE_ROOT)
-    except (BundleError, OSError) as exc:
+        manifest, bundle_hash, signature = _lightweight_bundle_info(BUNDLE_ROOT)
+    except (BundleError, OSError, UnicodeError, json.JSONDecodeError) as exc:
         status["reason"] = str(exc)
-        return status
-    status.update(valid)
+    else:
+        status.update({
+            "available": True,
+            "dataset_id": manifest["dataset_id"],
+            "version": manifest["version"],
+            "total_repositories": manifest["total_repositories"],
+            "data_as_of": manifest["data_as_of"],
+            "bundle_hash": bundle_hash,
+        })
+        verification = session.get(ApplicationSetting, "featured_bundle_verification")
+        cached = _json_object(verification.setting_value) if verification else {}
+        if cached.get("signature") == signature and cached.get("bundle_hash") == bundle_hash:
+            status["verification_status"] = "verified"
+            status["last_verification"] = cached
+        else:
+            status["verification_status"] = "pending"
+            status["last_verification"] = cached or None
+
+    dataset = session.get(Dataset, FEATURED_ID)
+    imported_meta = _json_object(dataset.source_metadata_json) if dataset else {}
+    status["imported_version"] = imported_meta.get("version")
+    status["imported_bundle_hash"] = imported_meta.get("bundle_hash")
+    status["imported_at"] = imported_meta.get("imported_at")
+    status["already_current"] = bool(
+        status["available"]
+        and _featured_bundle_is_current(imported_meta, status["bundle_hash"], imported, status["total_repositories"])
+    )
     status["imported_repositories"] = imported
-    status["reason"] = None
+    active_job = session.scalar(
+        select(DatasetImportJob)
+        .where(DatasetImportJob.dataset_id == FEATURED_ID, DatasetImportJob.status.in_(("queued", "running")))
+        .order_by(desc(DatasetImportJob.created_at))
+        .limit(1)
+    )
+    latest_job = active_job or session.scalar(select(DatasetImportJob).order_by(desc(DatasetImportJob.created_at)).limit(1))
+    status["active_task"] = _dataset_job_summary(active_job) if active_job else None
+    status["latest_task"] = _dataset_job_summary(latest_job) if latest_job else None
     return status
+
+
+def _featured_imported_repository_count(session: Session) -> int:
+    return int(session.scalar(
+        select(func.count(func.distinct(DatasetRepository.repository_id)))
+        .join(RepositorySnapshot, RepositorySnapshot.repository_id == DatasetRepository.repository_id)
+        .where(DatasetRepository.dataset_id == FEATURED_ID, RepositorySnapshot.valid.is_(True))
+    ) or 0)
+
+
+def _featured_bundle_is_current(
+    imported_meta: dict[str, Any],
+    bundle_hash: str | None,
+    imported_repositories: int,
+    total_repositories: int,
+) -> bool:
+    return (
+        imported_meta.get("bundle_hash") == bundle_hash
+        and imported_meta.get("complete", True) is not False
+        and imported_repositories >= total_repositories
+    )
+
+
+def invalidate_featured_import_for_repositories(session: Session, repository_ids: list[int]) -> set[int]:
+    featured_ids = set(session.scalars(
+        select(DatasetRepository.repository_id).where(
+            DatasetRepository.dataset_id == FEATURED_ID,
+            DatasetRepository.repository_id.in_(repository_ids),
+        )
+    ).all())
+    if not featured_ids:
+        return set()
+
+    session.execute(
+        delete(DatasetRepository).where(
+            DatasetRepository.dataset_id == FEATURED_ID,
+            DatasetRepository.repository_id.in_(featured_ids),
+        )
+    )
+    dataset = session.get(Dataset, FEATURED_ID)
+    if dataset:
+        imported_meta = _json_object(dataset.source_metadata_json)
+        if imported_meta:
+            imported_meta["complete"] = False
+            dataset.source_metadata_json = json.dumps(imported_meta, ensure_ascii=False)
+    return featured_ids
+
+
+def queue_featured_import(session: Session, idempotency_key: str | None = None) -> dict[str, Any]:
+    if idempotency_key:
+        previous = session.scalar(select(DatasetImportJob).where(DatasetImportJob.idempotency_key == idempotency_key))
+        if previous:
+            return _queue_response(previous)
+    status = featured_status(session)
+    if not status["available"]:
+        raise AppError(409, "DATASET_BUNDLE_UNAVAILABLE", status["reason"] or "精选数据包不可用")
+    if status["already_current"]:
+        return {
+            "task_id": None,
+            "dataset_id": FEATURED_ID,
+            "version": status["version"],
+            "bundle_hash": status["bundle_hash"],
+            "status": "succeeded",
+            "already_current": True,
+        }
+
+    begin_immediate(session)
+    if idempotency_key:
+        existing_by_key = session.scalar(select(DatasetImportJob).where(DatasetImportJob.idempotency_key == idempotency_key))
+        if existing_by_key:
+            session.commit()
+            return _queue_response(existing_by_key)
+    dataset = session.get(Dataset, FEATURED_ID)
+    imported_meta = _json_object(dataset.source_metadata_json) if dataset else {}
+    if _featured_bundle_is_current(
+        imported_meta,
+        status["bundle_hash"],
+        _featured_imported_repository_count(session),
+        status["total_repositories"],
+    ):
+        session.commit()
+        return {
+            "task_id": None,
+            "dataset_id": FEATURED_ID,
+            "version": status["version"],
+            "bundle_hash": status["bundle_hash"],
+            "status": "succeeded",
+            "already_current": True,
+        }
+    active = session.scalar(
+        select(DatasetImportJob)
+        .where(
+            DatasetImportJob.dataset_id == FEATURED_ID,
+            DatasetImportJob.bundle_hash == status["bundle_hash"],
+            DatasetImportJob.status.in_(("queued", "running")),
+        )
+        .limit(1)
+    )
+    if active:
+        session.commit()
+        return _queue_response(active)
+
+    job = DatasetImportJob(
+        task_id=str(uuid.uuid4()),
+        dataset_id=FEATURED_ID,
+        bundle_version=str(status["version"]),
+        bundle_hash=str(status["bundle_hash"]),
+        status="queued",
+        phase="validating",
+        progress_kind="indeterminate",
+        message="等待导入 Worker",
+        idempotency_key=idempotency_key,
+        staging_state_json="{}",
+    )
+    session.add(job)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        active = session.scalar(
+            select(DatasetImportJob)
+            .where(
+                DatasetImportJob.dataset_id == FEATURED_ID,
+                DatasetImportJob.bundle_hash == status["bundle_hash"],
+                DatasetImportJob.status.in_(("queued", "running")),
+            )
+            .limit(1)
+        )
+        if active:
+            return _queue_response(active)
+        raise
+    return _queue_response(job)
+
+
+def _queue_response(job: DatasetImportJob) -> dict[str, Any]:
+    return {
+        "task_id": job.task_id,
+        "dataset_id": job.dataset_id,
+        "version": job.bundle_version,
+        "bundle_hash": job.bundle_hash,
+        "status": job.status,
+        "already_current": False,
+    }
+
+
+def _dataset_job_summary(job: DatasetImportJob | None) -> dict[str, Any] | None:
+    if job is None:
+        return None
+    return {
+        "task_id": job.task_id,
+        "status": job.status,
+        "phase": job.phase,
+        "progress_percent": job.progress_percent,
+        "progress_kind": job.progress_kind,
+        "processed_records": job.processed_records,
+        "total_records": job.total_records,
+        "current_file": job.current_file,
+        "message": job.message,
+        "error_code": job.error_code,
+        "error_message": job.error_message,
+        "created_at": iso_z(job.created_at),
+        "updated_at": iso_z(job.updated_at),
+        "finished_at": iso_z(job.finished_at),
+        "result": _json_object(job.result_json),
+        "retry_of": job.retry_of,
+        "version": job.bundle_version,
+        "bundle_hash": job.bundle_hash,
+    }
+
+
+def _lightweight_bundle_info(root: Path) -> tuple[dict[str, Any], str, str]:
+    if not root.is_dir():
+        raise BundleError("内置精选数据包尚未生成。请先准备 data/datasets/featured-v1/。")
+    required = ALLOWED_FILES | {"SHA256SUMS"}
+    missing = sorted(relative for relative in required if not (root / relative).is_file())
+    if missing:
+        raise BundleError(f"内置精选数据包文件缺失: {', '.join(missing[:5])}")
+    manifest_path = root / "dataset.json"
+    sums_path = root / "SHA256SUMS"
+    if manifest_path.stat().st_size > 1_000_000 or sums_path.stat().st_size > 2_000_000:
+        raise BundleError("数据包元信息超过大小限制")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("dataset_id") != FEATURED_ID
+        or manifest.get("schema_version") != 1
+        or not isinstance(manifest.get("version"), str)
+        or type(manifest.get("total_repositories")) is not int
+        or parse_github_datetime(manifest.get("data_as_of")) is None
+    ):
+        raise BundleError("精选数据包 manifest 无效")
+    sums_bytes = sums_path.read_bytes()
+    bundle_hash = hashlib.sha256(sums_bytes).hexdigest()
+    signature_parts = []
+    for relative in sorted(required):
+        stat_result = (root / relative).stat()
+        signature_parts.append(f"{relative}:{stat_result.st_size}:{stat_result.st_mtime_ns}")
+    signature = hashlib.sha256("\n".join(signature_parts).encode()).hexdigest()
+    return manifest, bundle_hash, signature
+
+
+def record_bundle_verification(session: Session, record_counts: dict[str, int]) -> None:
+    _manifest, bundle_hash, signature = _lightweight_bundle_info(BUNDLE_ROOT)
+    now = iso_z(utc_now())
+    payload = json.dumps({
+        "bundle_hash": bundle_hash,
+        "signature": signature,
+        "verified_at": now,
+        "record_counts": record_counts,
+    }, ensure_ascii=False)
+    setting = session.get(ApplicationSetting, "featured_bundle_verification")
+    if setting is None:
+        setting = ApplicationSetting(setting_key="featured_bundle_verification", setting_value=payload)
+        session.add(setting)
+    else:
+        setting.setting_value = payload
+        setting.updated_at = utc_now()
+    session.commit()
 
 
 def import_featured_bundle(session: Session, source: Path | None = None) -> dict[str, Any]:
@@ -371,9 +628,19 @@ def _read_jsonl_gzip(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _import_records(session: Session, metadata: dict[str, Any], records: dict[str, list[dict[str, Any]]], bundle_hash: str) -> dict[str, int]:
+def _import_records(
+    session: Session,
+    metadata: dict[str, Any],
+    records: dict[str, list[dict[str, Any]]],
+    bundle_hash: str,
+    *,
+    task_id: str | None = None,
+    worker_id: str | None = None,
+    attempt: int | None = None,
+    archive_paths: dict[int, str] | None = None,
+) -> dict[str, int]:
     now = utc_now()
-    source_task_id = f"bundle-{metadata['version']}-{bundle_hash[:12]}"
+    source_task_id = task_id or f"bundle-{metadata['version']}-{bundle_hash[:12]}"
     begin_immediate(session)
     try:
         dataset = session.get(Dataset, FEATURED_ID)
@@ -395,9 +662,20 @@ def _import_records(session: Session, metadata: dict[str, Any], records: dict[st
             session.flush()
         dataset.rules_version = metadata["version"]
         dataset.frozen_at = parse_github_datetime(metadata["data_as_of"])
-        dataset.source_metadata_json = json.dumps({"version": metadata["version"], "bundle_hash": bundle_hash, "data_as_of": metadata["data_as_of"], "schema_version": metadata["schema_version"]}, ensure_ascii=False)
+        dataset.source_metadata_json = json.dumps({
+            "version": metadata["version"],
+            "bundle_hash": bundle_hash,
+            "complete": True,
+            "data_as_of": metadata["data_as_of"],
+            "schema_version": metadata["schema_version"],
+            "imported_at": iso_z(now),
+        }, ensure_ascii=False)
 
         repo_rows = {_positive_int(row["repository_id"]): row for row in records["repositories"]}
+        membership_by_repo = {
+            _positive_int(row["repository_id"]): row
+            for row in records["memberships"]
+        }
         repository_objects: dict[int, Repository] = {}
         for repository_id, row in repo_rows.items():
             by_id = session.get(Repository, repository_id)
@@ -418,7 +696,7 @@ def _import_records(session: Session, metadata: dict[str, Any], records: dict[st
             for dataset_id in (FEATURED_ID, LIBRARY_ID):
                 member = session.get(DatasetRepository, (dataset_id, repository_id))
                 if member is None:
-                    source_member = next(item for item in records["memberships"] if _positive_int(item["repository_id"]) == repository_id)
+                    source_member = membership_by_repo[repository_id]
                     session.add(DatasetRepository(
                         dataset_id=dataset_id,
                         repository_id=repository_id,
@@ -459,9 +737,36 @@ def _import_records(session: Session, metadata: dict[str, Any], records: dict[st
         _import_events(session, records, source_task_id, counts, now)
         _import_analysis(session, records["analysis"], counts)
         _import_coverage(session, records["coverage"], counts)
-        _import_insights(session, records, source_task_id, counts, now)
+        _import_insights(session, records, source_task_id, counts, now, archive_paths)
         if len(records["analysis"]) < len(repo_rows) or len(records["insights"]) < len(repo_rows) or len(records["coverage"]) < len(repo_rows):
             counts["warning_count"] += 1
+        if task_id:
+            job = session.get(DatasetImportJob, task_id)
+            if (
+                job is None
+                or job.status != "running"
+                or worker_id is not None and job.lease_owner != worker_id
+                or attempt is not None and job.attempt != attempt
+                or job.lease_until is None
+                or job.lease_until <= now
+            ):
+                raise AppError(409, "DATASET_IMPORT_TASK_STALE", "导入任务已失去执行权，不能提交数据")
+            job.status = "succeeded"
+            job.phase = None
+            job.progress_kind = "records"
+            job.progress_percent = 100
+            job.processed_records = job.total_records or job.processed_records
+            job.current_file = None
+            job.message = "精选数据导入完成"
+            job.result_json = json.dumps(counts, ensure_ascii=False)
+            job.error_code = None
+            job.error_message = None
+            job.updated_at = now
+            job.finished_at = now
+            job.heartbeat_at = now
+            job.lease_owner = None
+            job.lease_until = None
+            session.execute(delete(DatasetImportStagingRecord).where(DatasetImportStagingRecord.task_id == task_id))
         session.commit()
         return counts
     except Exception:
@@ -473,32 +778,56 @@ def _import_events(session: Session, records, source_task_id: str, counts: dict[
     types = {"commits": "commit", "issues": "issue", "pulls": "pull_request", "releases": "release"}
     fields = ("event_at", "created_at", "closed_at", "merged_at", "published_at", "updated_at", "first_seen_at", "last_seen_at")
     for module in MODULES:
-        for row in records[f"events/{module}"]:
-            repository_id = _positive_int(row.get("repository_id"))
-            item_id = row.get("source_item_id")
-            if not isinstance(item_id, str) or not item_id or len(item_id) > 64 or row.get("event_type") != types[module]:
-                raise BundleError(f"events/{module} 包含无效事件 ID 或类型")
-            event = session.scalar(select(RepositoryActivityEvent).where(RepositoryActivityEvent.repository_id == repository_id, RepositoryActivityEvent.event_type == types[module], RepositoryActivityEvent.source_item_id == item_id).limit(1))
-            incoming_last_seen = parse_github_datetime(row.get("last_seen_at")) or now
-            if event and event.last_seen_at >= incoming_last_seen:
-                counts["skipped_count"] += 1
-                continue
-            values = {name: parse_github_datetime(row.get(name)) for name in fields}
-            values.update({
-                "repository_id": repository_id,
-                "event_type": types[module],
-                "source_item_id": item_id,
-                "author_key": row.get("author_key") if isinstance(row.get("author_key"), str) else None,
-                "is_draft": row.get("is_draft") if type(row.get("is_draft")) is bool else None,
-                "is_prerelease": row.get("is_prerelease") if type(row.get("is_prerelease")) is bool else None,
-                "source_task_id": source_task_id,
-            })
-            if event:
-                for key, value in values.items():
-                    setattr(event, key, value)
-            else:
-                session.add(RepositoryActivityEvent(**values))
-            counts["event_count"] += 1
+        rows = records[f"events/{module}"]
+        for offset in range(0, len(rows), 500):
+            batch = rows[offset:offset + 500]
+            identity_keys = []
+            for row in batch:
+                repository_id = _positive_int(row.get("repository_id"))
+                item_id = row.get("source_item_id")
+                if repository_id is None or not isinstance(item_id, str) or not item_id or len(item_id) > 64 or row.get("event_type") != types[module]:
+                    raise BundleError(f"events/{module} 包含无效事件 ID 或类型")
+                identity_keys.append((repository_id, item_id))
+            key_set = set(identity_keys)
+            existing_rows = session.scalars(
+                select(RepositoryActivityEvent).where(
+                    RepositoryActivityEvent.event_type == types[module],
+                    tuple_(RepositoryActivityEvent.repository_id, RepositoryActivityEvent.source_item_id).in_(identity_keys),
+                )
+            ).all() if identity_keys else []
+            existing_by_key = {
+                (event.repository_id, event.source_item_id): event
+                for event in existing_rows
+                if (event.repository_id, event.source_item_id) in key_set
+            }
+            new_events = []
+            for row in batch:
+                repository_id = _positive_int(row.get("repository_id"))
+                item_id = row["source_item_id"]
+                event = existing_by_key.get((repository_id, item_id))
+                incoming_last_seen = parse_github_datetime(row.get("last_seen_at")) or now
+                if event and event.last_seen_at >= incoming_last_seen:
+                    counts["skipped_count"] += 1
+                    continue
+                values = {name: parse_github_datetime(row.get(name)) for name in fields}
+                values.update({
+                    "repository_id": repository_id,
+                    "event_type": types[module],
+                    "source_item_id": item_id,
+                    "author_key": row.get("author_key") if isinstance(row.get("author_key"), str) else None,
+                    "is_draft": row.get("is_draft") if type(row.get("is_draft")) is bool else None,
+                    "is_prerelease": row.get("is_prerelease") if type(row.get("is_prerelease")) is bool else None,
+                    "source_task_id": source_task_id,
+                })
+                if event:
+                    for key, value in values.items():
+                        setattr(event, key, value)
+                else:
+                    new_events.append(RepositoryActivityEvent(**values))
+                counts["event_count"] += 1
+            if new_events:
+                session.add_all(new_events)
+            session.flush()
 
 
 def _import_analysis(session: Session, rows: list[dict], counts: dict[str, int]) -> None:
@@ -563,15 +892,27 @@ def _import_coverage(session: Session, rows: list[dict], counts: dict[str, int])
         ))
 
 
-def _import_insights(session: Session, records, source_task_id: str, counts: dict[str, int], now) -> None:
-    rows_by_repo: dict[int, dict] = {}
-    details_by_repo: dict[int, dict[str, list[dict]]] = {}
+def _import_insights(
+    session: Session,
+    records,
+    source_task_id: str,
+    counts: dict[str, int],
+    now,
+    archive_paths: dict[int, str] | None = None,
+) -> None:
+    repository_reader = getattr(records, "for_repository", None)
+    details_by_repo: dict[int, dict[str, list[dict]]] | None = None
+    if not callable(repository_reader):
+        details_by_repo = {}
+        for module in MODULES:
+            for detail in records[f"details/{module}"]:
+                repository_id = _positive_int(detail.get("repository_id"))
+                if repository_id is None or not isinstance(detail.get("item"), dict):
+                    raise BundleError("详情归档记录无效")
+                details_by_repo.setdefault(repository_id, {name: [] for name in MODULES})[module].append(detail["item"])
+
     for row in records["insights"]:
-        rows_by_repo[_positive_int(row["repository_id"])] = row
-    for module in MODULES:
-        for row in records[f"details/{module}"]:
-            details_by_repo.setdefault(_positive_int(row["repository_id"]), {name: [] for name in MODULES})[module].append(row["item"])
-    for repository_id, row in rows_by_repo.items():
+        repository_id = _positive_int(row["repository_id"])
         analyzed_at = parse_github_datetime(row.get("analyzed_at"))
         start = parse_github_datetime(row.get("window_start"))
         end = parse_github_datetime(row.get("window_end"))
@@ -581,13 +922,25 @@ def _import_insights(session: Session, records, source_task_id: str, counts: dic
         if session.get(RepositoryInsightRun, str(uuid.uuid5(uuid.NAMESPACE_URL, fingerprint))) or session.scalar(select(RepositoryInsightRun.run_id).where(RepositoryInsightRun.input_fingerprint == fingerprint).limit(1)):
             counts["skipped_count"] += 1
             continue
-        details = details_by_repo.get(repository_id, {name: [] for name in MODULES})
+        if callable(repository_reader):
+            details = {}
+            for module in MODULES:
+                detail_rows = repository_reader(f"details/{module}", repository_id)
+                details[module] = []
+                for detail in detail_rows:
+                    if _positive_int(detail.get("repository_id")) != repository_id or not isinstance(detail.get("item"), dict):
+                        raise BundleError("详情归档记录无效")
+                    details[module].append(detail["item"])
+        else:
+            details = (details_by_repo or {}).get(repository_id, {name: [] for name in MODULES})
         sources = row.get("sources") if isinstance(row.get("sources"), dict) else {}
         safe_archive = {module: {"pages": [details[module]]} for module in MODULES}
         safe_archive["_meta"] = {"schema_version": 2, "sources": sources, "window_start": iso_z(start), "window_end": iso_z(end)}
         from backend.app.pipeline.raw_archive import archive_json
 
-        archive_path = archive_json(repository_id, source_task_id, "activity", safe_archive)
+        archive_path = (archive_paths or {}).get(repository_id)
+        if archive_path is None:
+            archive_path = archive_json(repository_id, source_task_id, "activity", safe_archive)
         run_id = str(uuid.uuid5(uuid.NAMESPACE_URL, fingerprint))
         result_json = row.get("result") if isinstance(row.get("result"), dict) else {}
         result_json = dict(result_json)

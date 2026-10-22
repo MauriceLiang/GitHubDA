@@ -1,7 +1,7 @@
 import type {
   CollectionSettings, CommitActivityPage, CommitEvent, ComparisonBundle, ComparisonEntry, ComparisonMode, Coverage, Granularity, HistogramResult, ReleaseDetails, ReleaseRecord,
   IssueOnlineDetail, IssueRecordDetail, IssueRecordPage, Metric, Observation, PullRequestActivityDetail, PullRequestActivityPage, PullRequestOnlineDetail, RepositoryAnalysis, RepositoryStatus, RepositorySummary,
-  FeaturedDatasetImportResult, FeaturedDatasetStatus, ResearchDataset, ResearchGroup, ResearchScatterPoint, TaskItem, TaskStatus, TimePoint, TimeWindow,
+  FeaturedDatasetImportResult, FeaturedDatasetStatus, FeaturedDatasetTaskSummary, ResearchDataset, ResearchGroup, ResearchScatterPoint, TaskItem, TaskStatus, TimePoint, TimeWindow,
 } from './types'
 import type { RepositoryDataSource } from './repositoryDataSource'
 
@@ -82,6 +82,33 @@ function numberOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 function textOrNull(value: unknown): string | null { return typeof value === 'string' && value ? value : null }
+function featuredTask(value: unknown): FeaturedDatasetTaskSummary | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const task = object(value)
+  if (typeof task.task_id !== 'string') return null
+  const status = task.status === 'queued' || task.status === 'running' || task.status === 'succeeded' || task.status === 'failed' ? task.status : 'failed'
+  const progressKind = task.progress_kind === 'records' || task.progress_kind === 'indeterminate' ? task.progress_kind : 'unknown'
+  return {
+    taskId: task.task_id,
+    status,
+    phase: textOrNull(task.phase),
+    progressPercent: numberOrNull(task.progress_percent),
+    progressKind,
+    processedRecords: Number.isFinite(Number(task.processed_records)) ? Number(task.processed_records) : 0,
+    totalRecords: numberOrNull(task.total_records),
+    currentFile: textOrNull(task.current_file),
+    message: textOrNull(task.message),
+    errorCode: textOrNull(task.error_code),
+    errorMessage: textOrNull(task.error_message),
+    createdAt: textOrNull(task.created_at),
+    updatedAt: textOrNull(task.updated_at),
+    finishedAt: textOrNull(task.finished_at),
+    result: task.result && typeof task.result === 'object' && !Array.isArray(task.result) ? task.result : null,
+    retryOf: textOrNull(task.retry_of),
+    version: textOrNull(task.version),
+    bundleHash: textOrNull(task.bundle_hash),
+  }
+}
 function shortDate(value: unknown): string | null { return textOrNull(value)?.slice(0, 10) ?? null }
 function qualityReason(value: unknown): string | undefined {
   if (typeof value !== 'string' || !value) return undefined
@@ -241,21 +268,28 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
       dataAsOf: textOrNull(status.data_as_of),
       bundleHash: textOrNull(status.bundle_hash),
       reason: textOrNull(status.reason),
+      alreadyCurrent: Boolean(status.already_current),
+      importedVersion: textOrNull(status.imported_version),
+      importedBundleHash: textOrNull(status.imported_bundle_hash),
+      importedAt: textOrNull(status.imported_at),
+      verificationStatus: status.verification_status === 'verified' || status.verification_status === 'pending' ? status.verification_status : 'unknown',
+      activeTask: featuredTask(status.active_task),
+      latestTask: featuredTask(status.latest_task),
     }
   }
 
   async importFeaturedDataset(): Promise<FeaturedDatasetImportResult> {
-    const result = await data<Record<string, any>>('/datasets/featured/import', { method: 'POST' })
+    const result = await data<Record<string, any>>('/datasets/featured/import', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+    })
     return {
+      taskId: textOrNull(result.task_id),
       datasetId: String(result.dataset_id ?? 'featured-default'),
       version: String(result.version ?? ''),
       bundleHash: String(result.bundle_hash ?? ''),
-      importedCount: Number(result.imported_count ?? 0),
-      alreadyPresentCount: Number(result.already_present_count ?? 0),
-      snapshotCount: Number(result.snapshot_count ?? 0),
-      eventCount: Number(result.event_count ?? 0),
-      warningCount: Number(result.warning_count ?? 0),
-      skippedCount: Number(result.skipped_count ?? 0),
+      status: result.status === 'succeeded' ? 'succeeded' : result.status === 'failed' ? 'failed' : result.status === 'running' ? 'running' : 'queued',
+      alreadyCurrent: Boolean(result.already_current),
     }
   }
 
@@ -318,6 +352,14 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
 
   async removeRepository(id: string): Promise<void> {
     await request(`/library/repositories/${repositoryId(id)}`, { method: 'DELETE' })
+  }
+
+  async clearRepositoryData(ids: string[], options: { removeFromLibrary?: boolean } = {}): Promise<void> {
+    const repositoryIds = [...new Set(ids.map((id) => repositoryId(id)))]
+    await data('/repositories/data/clear', {
+      method: 'POST',
+      body: JSON.stringify({ repository_ids: repositoryIds, remove_from_library: options.removeFromLibrary ?? false }),
+    })
   }
 
   async refreshRepository(id: string, scopeKind: 'quick' | 'window' = 'quick'): Promise<string> {
@@ -730,25 +772,37 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
 
   async listTasks(): Promise<TaskItem[]> {
     const result = await data<{ items: Record<string, any>[] }>('/tasks?per_page=100')
-    const repositories = await this.listRepositories()
-    const names = new Map(repositories.map((repo) => [Number(repo.id), repo.fullName]))
     return result.items.map((task) => {
       const error = object(task.error)
+      const datasetImport = task.task_type === 'dataset_import'
+      const rawRepositoryId = Number(task.repository_id)
+      const repositoryId = Number.isSafeInteger(rawRepositoryId) && rawRepositoryId > 0 ? rawRepositoryId : undefined
       const currentModule = String(task.current_module ?? task.type ?? 'repository')
       const status = task.status === 'succeeded' ? 'done' : String(task.status) as TaskStatus
       return {
         id: String(task.task_id),
-        repositoryId: Number(task.repository_id),
-        repository: names.get(Number(task.repository_id)) ?? `仓库 #${task.repository_id}`,
+        taskType: datasetImport ? 'dataset_import' : 'repository_collection',
+        targetType: datasetImport ? 'dataset' : 'repository',
+        targetId: String(task.target_id ?? task.repository_id ?? ''),
+        operation: String(task.operation ?? task.type ?? ''),
+        ...(repositoryId ? { repositoryId } : {}),
+        repository: String(task.display_name ?? (repositoryId ? `仓库 #${repositoryId}` : '精选仓库数据集')),
         module: currentModule,
         status,
         stage: textOrNull(task.message) ?? textOrNull(task.phase) ?? '等待 Worker 更新状态',
+        phase: textOrNull(task.phase),
         progressPercent: numberOrNull(task.progress_percent),
-        progressKind: task.progress_kind === 'stages' ? 'stages' : 'unknown',
-        scopeKind: task.scope_kind === 'backfill' ? 'backfill' : task.scope_kind === 'incremental' ? 'incremental' : task.scope_kind === 'window' ? 'window' : 'quick',
+        progressKind: task.progress_kind === 'stages' || task.progress_kind === 'records' || task.progress_kind === 'indeterminate' ? task.progress_kind : 'unknown',
+        scopeKind: task.scope_kind === 'backfill' || task.scope_kind === 'incremental' || task.scope_kind === 'window' ? task.scope_kind : task.scope_kind === null ? null : 'quick',
         windowStart: textOrNull(task.window_start),
         windowEnd: textOrNull(task.window_end),
         resumeAfter: textOrNull(task.resume_after),
+        processedRecords: numberOrNull(task.processed_records),
+        totalRecords: numberOrNull(task.total_records),
+        currentFile: textOrNull(task.current_file),
+        version: textOrNull(task.version),
+        result: task.result && typeof task.result === 'object' && !Array.isArray(task.result) ? task.result : null,
+        retryOf: textOrNull(task.retry_of),
         modules: array(task.modules).map((module) => ({
           name: String(module.name ?? ''),
           status: String(module.status ?? 'pending'),
@@ -758,7 +812,7 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
           observedItems: Number(module.observed_items ?? 0),
           errorCode: textOrNull(module.error_code),
         })),
-        updatedAt: shortDate(task.progress_updated_at ?? task.finished_at ?? task.started_at ?? task.created_at) ?? '—',
+        updatedAt: shortDate(task.updated_at ?? task.progress_updated_at ?? task.finished_at ?? task.started_at ?? task.created_at) ?? '—',
         error: textOrNull(error.message) ?? undefined,
       }
     })

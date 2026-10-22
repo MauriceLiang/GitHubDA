@@ -4,8 +4,8 @@ import httpx
 
 from backend.app.core.clock import utc_now
 from backend.app.integrations.github.client import GITHUB_API
-from backend.app.persistence.models import ApiRateLimitState, CollectionTask
-from backend.app.worker.queue import claim_next_task
+from backend.app.persistence.models import ApiRateLimitState, CollectionTask, DatasetImportJob
+from backend.app.worker.queue import claim_next_dataset_import_job, claim_next_task
 from backend.app.worker.main import _persist_rate_limit_state
 
 
@@ -118,3 +118,49 @@ def test_backfill_queue_yields_to_normal_collection_tasks(backend_client):
     with factory() as session:
         claimed = claim_next_task(session, "priority-worker", 30)
     assert claimed and claimed.task_id == "interactive-window-task"
+
+
+def test_dataset_import_worker_ignores_github_quota_and_recovers_expired_lease(backend_client):
+    client, factory, _github = backend_client
+    added = client.post("/api/v1/library/repositories", json={"full_name": "example/project", "auto_analyze": False}, headers=HEADERS).json()["data"]
+    now = utc_now()
+    with factory() as session:
+        session.add(DatasetImportJob(
+            task_id="dataset-import-lease",
+            dataset_id="featured-default",
+            bundle_version="featured-test",
+            bundle_hash="c" * 64,
+            status="queued",
+            phase="validating",
+            progress_kind="indeterminate",
+            created_at=now,
+            updated_at=now,
+        ))
+        session.add(CollectionTask(
+            task_id="collection-waits-for-dataset-import",
+            repository_id=added["repository_id"],
+            depth="basic",
+            status="queued",
+            created_at=now,
+        ))
+        session.add(ApiRateLimitState(resource="core", remaining=0, reset_at=now + timedelta(minutes=5), observed_at=now))
+        session.commit()
+
+    with factory() as session:
+        first = claim_next_dataset_import_job(session, "dataset-worker-one", 30)
+        assert first and first.task_id == "dataset-import-lease"
+        assert first.attempt == 1
+        first.lease_until = utc_now() - timedelta(seconds=1)
+        session.commit()
+
+    with factory() as session:
+        recovered = claim_next_dataset_import_job(session, "dataset-worker-two", 30)
+        assert recovered and recovered.task_id == "dataset-import-lease"
+        assert recovered.attempt == 2
+        assert recovered.status == "running"
+        assert recovered.lease_owner == "dataset-worker-two"
+        quota = session.get(ApiRateLimitState, "core")
+        quota.remaining = 1
+        quota.retry_after = utc_now() - timedelta(seconds=1)
+        session.commit()
+        assert claim_next_task(session, "repository-worker", 30) is None
