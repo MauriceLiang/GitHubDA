@@ -354,6 +354,14 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
     await request(`/library/repositories/${repositoryId(id)}`, { method: 'DELETE' })
   }
 
+  async clearRepositoryData(ids: string[], options: { removeFromLibrary?: boolean } = {}): Promise<void> {
+    const repositoryIds = [...new Set(ids.map((id) => repositoryId(id)))]
+    await data('/repositories/data/clear', {
+      method: 'POST',
+      body: JSON.stringify({ repository_ids: repositoryIds, remove_from_library: options.removeFromLibrary ?? false }),
+    })
+  }
+
   async refreshRepository(id: string, scopeKind: 'quick' | 'window' = 'quick'): Promise<string> {
     const result = await data<Record<string, any>>(`/repositories/${repositoryId(id)}/refresh`, {
       method: 'POST',

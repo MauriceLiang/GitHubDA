@@ -11,11 +11,34 @@ from backend.app.core.clock import iso_z
 from backend.app.core.exceptions import AppError
 from backend.app.persistence.models import CollectionTask, Repository, RepositorySnapshot
 from backend.app.schemas.common import SuccessEnvelope
-from backend.app.schemas.repositories import AnalysisResponse, RepositoryDetail, RefreshRequest, RefreshResponse, SeriesResponse
+from backend.app.schemas.repositories import (
+    AnalysisResponse,
+    ClearRepositoryDataRequest,
+    ClearRepositoryDataResponse,
+    RefreshRequest,
+    RefreshResponse,
+    RepositoryDetail,
+    SeriesResponse,
+)
 from backend.app.services.repositories import add_idempotency_response, analysis_status, cached_idempotency_response, enqueue_refresh, latest_analysis, latest_snapshot, summary
+from backend.app.services.repository_data import clear_repository_data
 
 
 router = APIRouter(prefix="/repositories", tags=["repositories"])
+
+
+@router.post("/data/clear", response_model=SuccessEnvelope[ClearRepositoryDataResponse])
+def clear_selected_repository_data(
+    request: Request,
+    body: ClearRepositoryDataRequest,
+    session: Session = Depends(get_session),
+):
+    result = clear_repository_data(
+        session,
+        body.repository_ids,
+        remove_from_library=body.remove_from_library,
+    )
+    return envelope(request, result)
 
 
 @router.get("/{repository_id}", response_model=SuccessEnvelope[RepositoryDetail])

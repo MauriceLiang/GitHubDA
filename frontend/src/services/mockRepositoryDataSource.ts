@@ -309,6 +309,10 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
     throw new Error('演示模式不支持修改仓库库')
   }
 
+  async clearRepositoryData(): Promise<void> {
+    throw new Error('演示模式不支持清除仓库数据')
+  }
+
   async refreshRepository(): Promise<string> { return 'mock-task' }
 
   async listRepositories(): Promise<RepositorySummary[]> {

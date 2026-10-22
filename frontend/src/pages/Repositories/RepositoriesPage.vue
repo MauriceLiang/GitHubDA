@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowRight, Download, Search } from 'lucide-vue-next'
+import { ArrowRight, Download, ListChecks, Search, Trash2 } from 'lucide-vue-next'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import GdBadge from '@/components/ui/GdBadge.vue'
@@ -26,6 +26,7 @@ const searchResults = ref<(RepositorySummary & { alreadyInLibrary: boolean })[]>
 const searchError = ref<string | null>(null)
 const searching = ref(false)
 const busyId = ref<string | null>(null)
+const clearingSelected = ref(false)
 const { data: repositories, loading, error, reload } = useAsyncData(() => source.listRepositories())
 const { data: featuredData, error: featuredStatusError, reload: reloadFeaturedStatus } = useAsyncData(() => source.getFeaturedDatasetStatus())
 const featuredStatus = ref<FeaturedDatasetStatus | null>(null)
@@ -66,6 +67,7 @@ const filtered = computed(() =>
     return matchesQuery && matchesStatus
   }),
 )
+const allFilteredSelected = computed(() => filtered.value.length > 0 && filtered.value.every((repo) => selected.value.includes(repo.id)))
 
 const statusMeta: Record<RepositoryStatus, { text: string; variant: 'default' | 'warn' | 'plain' }> = {
   ready: { text: '已完成', variant: 'default' },
@@ -77,11 +79,31 @@ const statusMeta: Record<RepositoryStatus, { text: string; variant: 'default' | 
 
 function toggle(repo: RepositorySummary) {
   if (selected.value.includes(repo.id)) selected.value = selected.value.filter((id) => id !== repo.id)
-  else if (selected.value.length >= 5) ui.toast('最多同时比较 5 个仓库')
+  else if (selected.value.length >= 100) ui.toast('最多一次选择 100 个仓库')
   else selected.value = [...selected.value, repo.id]
 }
 
+function toggleAllFiltered() {
+  const visibleIds = filtered.value.map((repo) => repo.id)
+  if (!visibleIds.length) return
+
+  if (allFilteredSelected.value) {
+    const visibleIdSet = new Set(visibleIds)
+    selected.value = selected.value.filter((id) => !visibleIdSet.has(id))
+    return
+  }
+
+  const selectedIds = new Set(selected.value)
+  const newIds = visibleIds.filter((id) => !selectedIds.has(id))
+  if (selected.value.length + newIds.length > 100) {
+    ui.toast('最多一次选择 100 个仓库，请先清除部分已选项')
+    return
+  }
+  selected.value = [...selected.value, ...newIds]
+}
+
 function compare() {
+  if (selected.value.length < 2 || selected.value.length > 5) return
   analysis.setCompare(selected.value)
   void router.push('/compare')
 }
@@ -128,6 +150,29 @@ async function remove(repo: RepositorySummary) {
     ui.toast(cause instanceof Error ? cause.message : '移除仓库失败')
   } finally {
     busyId.value = null
+  }
+}
+
+async function deleteSelectedRepositories() {
+  const repositoryIds = [...selected.value]
+  if (!repositoryIds.length) return
+  const names = new Map((repositories.value ?? []).map((repo) => [repo.id, repo.fullName]))
+  const shownNames = repositoryIds.slice(0, 5).map((id) => names.get(id) ?? `仓库 #${id}`)
+  const remaining = repositoryIds.length - shownNames.length
+  const list = `${shownNames.join('、')}${remaining > 0 ? ` 等 ${repositoryIds.length} 个仓库` : ''}`
+  if (!window.confirm(`确定删除所选仓库的本地采集与分析数据，并从“我的仓库”移除吗？\n\n${list}\n\n仓库资料、其他数据集归属与任务历史会保留；内置精选数据集中的对应条目会标记为待重新导入。此操作不可撤销。`)) return
+
+  clearingSelected.value = true
+  try {
+    await source.clearRepositoryData(repositoryIds, { removeFromLibrary: true })
+    selected.value = selected.value.filter((id) => !repositoryIds.includes(id))
+    analysis.setCompare(analysis.compareIds.filter((id) => !repositoryIds.includes(id)))
+    await Promise.all([reload(), reloadFeaturedStatus()])
+    ui.toast(`已删除 ${repositoryIds.length} 个仓库的本地数据并从“我的仓库”移除`)
+  } catch (cause) {
+    ui.toast(cause instanceof Error ? cause.message : '删除所选仓库失败')
+  } finally {
+    clearingSelected.value = false
   }
 }
 
@@ -248,6 +293,9 @@ async function exportFeatured() {
         <option value="failed">采集失败</option>
         <option value="idle">尚未分析</option>
       </select>
+      <GdButton v-if="tab === 'library'" variant="outline" size="sm" :disabled="!filtered.length || clearingSelected" title="全选当前搜索和状态筛选结果" @click="toggleAllFiltered">
+        <ListChecks :size="13" />{{ allFilteredSelected ? '取消当前全选' : '全选当前列表' }}
+      </GdButton>
       <GdButton v-else size="sm" :disabled="searching" @click="searchGithub">{{ searching ? '搜索中…' : '搜索 GitHub' }}</GdButton>
     </div>
 
@@ -264,7 +312,7 @@ async function exportFeatured() {
         </div>
         <div v-else class="divide-y divide-line">
           <div v-for="repo in (tab === 'library' ? filtered : searchResults)" :key="repo.id" class="grid grid-cols-[24px_1fr] items-center gap-3 py-3 lg:grid-cols-[24px_1.7fr_1fr_104px_96px_76px_132px]">
-            <input v-if="tab === 'library'" type="checkbox" class="size-3.5 accent-ink" :checked="selected.includes(repo.id)" @change="toggle(repo)" />
+            <input v-if="tab === 'library'" type="checkbox" class="size-3.5 accent-ink" :disabled="clearingSelected || busyId === repo.id" :checked="selected.includes(repo.id)" @change="toggle(repo)" />
             <span v-else />
             <div class="min-w-0">
               <div class="truncate text-[13px] font-semibold">{{ repo.fullName }}</div>
@@ -283,7 +331,7 @@ async function exportFeatured() {
               >
                 {{ repo.status === 'idle' ? '开始分析' : '查看分析' }}
               </RouterLink>
-              <GdButton v-if="tab === 'library'" variant="ghost" size="sm" :disabled="busyId === repo.id" @click="remove(repo)">移除</GdButton>
+              <GdButton v-if="tab === 'library'" variant="ghost" size="sm" :disabled="clearingSelected || busyId === repo.id" @click="remove(repo)">移除</GdButton>
               <GdButton v-else size="sm" :disabled="repo.alreadyInLibrary || busyId === repo.id" @click="add(repo)">{{ repo.alreadyInLibrary ? '已在分析库' : busyId === repo.id ? '正在添加…' : '添加并分析' }}</GdButton>
             </div>
           </div>
@@ -297,10 +345,11 @@ async function exportFeatured() {
     </GdCard>
 
     <div v-if="selected.length" class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-soft px-3.5 py-2.5 text-[12.5px]">
-      <span>已选择 {{ selected.length }} 个仓库{{ selected.length === 1 ? '，再选 1 个可比较' : '' }}</span>
+      <span>已选择 {{ selected.length }} 个仓库<span class="text-muted"> · 删除最多支持 100 个，比较需选择 2–5 个</span></span>
       <div class="flex gap-2">
-        <GdButton variant="ghost" size="sm" @click="selected = []">清除</GdButton>
-        <GdButton size="sm" :disabled="selected.length < 2" @click="compare">进入比较 <ArrowRight :size="12" /></GdButton>
+        <GdButton variant="ghost" size="sm" :disabled="clearingSelected" @click="selected = []">清除选择</GdButton>
+        <GdButton variant="danger" size="sm" :loading="clearingSelected" :disabled="busyId !== null" @click="deleteSelectedRepositories"><Trash2 :size="12" />删除所选仓库及数据</GdButton>
+        <GdButton size="sm" :disabled="selected.length < 2 || selected.length > 5 || clearingSelected" @click="compare">进入比较 <ArrowRight :size="12" /></GdButton>
       </div>
     </div>
   </div>

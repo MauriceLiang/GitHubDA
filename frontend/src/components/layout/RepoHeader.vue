@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CalendarDays, Database, Download, ExternalLink, GitCompare, Info, RefreshCw, Scale, Code2 } from 'lucide-vue-next'
+import { CalendarDays, Database, Download, ExternalLink, GitCompare, Info, RefreshCw, Scale, Code2, Trash2 } from 'lucide-vue-next'
 import { ref } from 'vue'
 import type { Coverage, RepositorySummary, TimeWindow } from '@/services/types'
 import GdBadge from '@/components/ui/GdBadge.vue'
@@ -11,7 +11,7 @@ import { downloadBlob } from '@/lib/download'
 import { useAnalysisStore } from '@/stores/analysis'
 import { useUiStore } from '@/stores/ui'
 
-const props = defineProps<{ repository: RepositorySummary; coverage: Coverage; collectedAt: string | null; windowStart: string | null; windowEnd: string | null; refreshing?: boolean }>()
+const props = defineProps<{ repository: RepositorySummary; coverage: Coverage; collectedAt: string | null; windowStart: string | null; windowEnd: string | null; refreshing?: boolean; clearing?: boolean }>()
 const analysis = useAnalysisStore()
 const ui = useUiStore()
 const source = useDataSource()
@@ -33,7 +33,7 @@ const windowOptions = [
   { value: 90, label: '90 天' },
   { value: 180, label: '180 天', disabled: true, hint: '当前后端最多提供 90 天活动分析' },
 ]
-const emit = defineEmits<{ refresh: [scopeKind: 'quick' | 'window'] }>()
+const emit = defineEmits<{ refresh: [scopeKind: 'quick' | 'window']; clear: [] }>()
 const setWindow = (value: string | number) => analysis.setWindow(value as TimeWindow)
 
 function toggleCompare() {
@@ -87,8 +87,9 @@ async function exportCsv() {
         <span class="text-[11px] text-muted">采集范围</span>
         <GdSegmented v-model="collectionScope" size="sm" :options="collectionScopeOptions" />
       </div>
-      <GdButton :disabled="refreshing" @click="emit('refresh', collectionScope)"><RefreshCw :size="14" /> {{ refreshing ? '排队中…' : '更新分析' }}</GdButton>
+      <GdButton :disabled="refreshing || clearing" @click="emit('refresh', collectionScope)"><RefreshCw :size="14" /> {{ refreshing ? '排队中…' : '更新分析' }}</GdButton>
       <GdIconButton label="导出聚合 CSV" :disabled="exporting" @click="exportCsv"><Download :size="16" /></GdIconButton>
+      <GdButton variant="danger" size="sm" :loading="clearing" :disabled="refreshing" @click="emit('clear')"><Trash2 :size="13" />清除仓库数据</GdButton>
     </div>
   </div>
 </template>

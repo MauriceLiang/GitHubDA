@@ -23,12 +23,13 @@ const ui = useUiStore()
 const analysisStore = useAnalysisStore()
 const source = useDataSource()
 const refreshing = ref(false)
+const clearing = ref(false)
 
 const repoId = computed(() => String(route.params.id ?? ''))
 const tab = computed(() => String(route.params.tab ?? 'overview'))
 const tabComponent = computed(() => ({ overview: OverviewTab, activity: ActivityTab, issues: IssuesTab, prs: PrsTab, releases: ReleasesTab }[tab.value] ?? OverviewTab))
 
-const { data, loading, error } = useAsyncData<RepositoryAnalysis>(
+const { data, loading, error, reload } = useAsyncData<RepositoryAnalysis>(
   () => source.getAnalysis(repoId.value, analysisStore.timeWindow, 'week'),
   () => [repoId.value, analysisStore.timeWindow],
 )
@@ -48,6 +49,22 @@ async function refresh(scopeKind: 'quick' | 'window' = 'quick') {
     ui.toast(cause instanceof Error ? cause.message : '启动采集失败')
   } finally {
     refreshing.value = false
+  }
+}
+
+async function clearCurrentRepositoryData() {
+  const fullName = data.value?.repository.fullName ?? `仓库 #${repoId.value}`
+  if (!window.confirm(`清除 ${fullName} 在本机保存的所有采集与分析数据，包括快照、活动记录、分析结果和原始归档？仓库资料、我的仓库归属与任务历史会保留；若它属于内置精选数据集，会标记为待重新导入。此操作不可撤销。`)) return
+  clearing.value = true
+  try {
+    await source.clearRepositoryData([repoId.value])
+    analysisStore.setCompare(analysisStore.compareIds.filter((id) => id !== repoId.value))
+    await reload()
+    ui.toast('已清除该仓库的本地采集与分析数据')
+  } catch (cause) {
+    ui.toast(cause instanceof Error ? cause.message : '清除仓库数据失败')
+  } finally {
+    clearing.value = false
   }
 }
 
@@ -72,6 +89,8 @@ function openWeek(payload: { date: string; count: number }) {
       :window-end="data.metrics.window.end"
       :refreshing="refreshing"
       @refresh="refresh"
+      :clearing="clearing"
+      @clear="clearCurrentRepositoryData"
     />
 
     <div v-if="loading" class="flex flex-col gap-4">

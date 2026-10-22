@@ -10,7 +10,9 @@ import pytest
 
 from backend.app.core.exceptions import AppError
 from backend.app.persistence.models import CollectionTask, DatasetImportJob
+from backend.app.pipeline import collection_archive
 from backend.app.services import dataset_import
+from backend.app.services import repository_data
 from backend.app.services.dataset_import import BundleError, import_featured_bundle, verify_dataset_bundle
 from backend.app.worker.dataset_import import execute_dataset_import_job, fail_dataset_import_job
 from backend.app.worker.queue import claim_next_dataset_import_job
@@ -247,6 +249,86 @@ def test_featured_api_queues_local_bundle_and_worker_imports_without_github_requ
     already_current = client.post("/api/v1/datasets/featured/import", headers=HEADERS)
     assert already_current.status_code == 200
     assert already_current.json()["data"]["already_current"] is True
+
+
+def test_clearing_imported_repository_allows_reimporting_same_bundle(backend_client, tmp_path, monkeypatch):
+    client, factory, _github = backend_client
+    root = _write_bundle(tmp_path / "featured-v1")
+    raw_root = tmp_path / "raw"
+    settings = lambda: type("Settings", (), {"raw_data_path": raw_root})()
+    monkeypatch.setattr(dataset_import, "BUNDLE_ROOT", root)
+    monkeypatch.setattr(repository_data, "get_settings", settings)
+    monkeypatch.setattr(collection_archive, "COLLECTED_ROOT", tmp_path / "collected" / "github")
+    monkeypatch.setattr("backend.app.pipeline.raw_archive.get_settings", settings)
+    monkeypatch.setattr("backend.app.worker.dataset_import.get_settings", settings)
+
+    with factory() as session:
+        first = import_featured_bundle(session, root)
+    assert first["imported_count"] == 1
+    assert client.get("/api/v1/datasets/featured/status", headers=HEADERS).json()["data"]["already_current"] is True
+
+    cleared = client.post(
+        "/api/v1/repositories/data/clear",
+        json={"repository_ids": [87654321]},
+        headers=HEADERS,
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["data"]["repositories"][0]["removed_from_featured"] is True
+
+    status = client.get("/api/v1/datasets/featured/status", headers=HEADERS).json()["data"]
+    assert status["already_current"] is False
+    assert status["imported_repositories"] == 0
+    queued = client.post("/api/v1/datasets/featured/import", headers=HEADERS)
+    assert queued.status_code == 202
+    task_id = queued.json()["data"]["task_id"]
+
+    with factory() as session:
+        claimed = claim_next_dataset_import_job(session, "dataset-worker", 60)
+    assert claimed is not None and claimed.task_id == task_id
+    execute_dataset_import_job(factory, task_id, "dataset-worker", 60)
+
+    task = client.get(f"/api/v1/tasks/{task_id}", headers=HEADERS).json()["data"]
+    assert task["status"] == "succeeded"
+    assert task["result"]["imported_count"] == 1
+    final_status = client.get("/api/v1/datasets/featured/status", headers=HEADERS).json()["data"]
+    assert final_status["already_current"] is True
+    assert final_status["imported_repositories"] == 1
+
+
+def test_legacy_featured_status_detects_deleted_data_after_backend_restart(backend_client, tmp_path, monkeypatch):
+    client, factory, _github = backend_client
+    root = _write_bundle(tmp_path / "featured-v1")
+    monkeypatch.setattr(dataset_import, "BUNDLE_ROOT", root)
+    monkeypatch.setattr("backend.app.pipeline.raw_archive.get_settings", lambda: type("Settings", (), {"raw_data_path": tmp_path / "raw"})())
+    monkeypatch.setattr("backend.app.worker.dataset_import.get_settings", lambda: type("Settings", (), {"raw_data_path": tmp_path / "raw"})())
+
+    with factory() as session:
+        import_featured_bundle(session, root)
+        featured = session.get(dataset_import.Dataset, dataset_import.FEATURED_ID)
+        assert featured is not None
+        metadata = dataset_import._json_object(featured.source_metadata_json)
+        metadata.pop("complete")
+        featured.source_metadata_json = json.dumps(metadata)
+        session.execute(dataset_import.delete(dataset_import.RepositorySnapshot).where(
+            dataset_import.RepositorySnapshot.repository_id == 87654321
+        ))
+        session.commit()
+
+    status = client.get("/api/v1/datasets/featured/status", headers=HEADERS).json()["data"]
+    assert status["imported_repositories"] == 0
+    assert status["already_current"] is False
+
+    queued = client.post("/api/v1/datasets/featured/import", headers=HEADERS)
+    assert queued.status_code == 202
+    task_id = queued.json()["data"]["task_id"]
+    with factory() as session:
+        claimed = claim_next_dataset_import_job(session, "dataset-worker", 60)
+    assert claimed is not None and claimed.task_id == task_id
+    execute_dataset_import_job(factory, task_id, "dataset-worker", 60)
+
+    final_status = client.get("/api/v1/datasets/featured/status", headers=HEADERS).json()["data"]
+    assert final_status["imported_repositories"] == 1
+    assert final_status["already_current"] is True
 
 
 def test_dataset_import_failure_rolls_back_business_rows_and_can_be_retried(backend_client, tmp_path, monkeypatch):

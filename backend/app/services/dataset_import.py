@@ -137,7 +137,7 @@ def verify_dataset_bundle(source: Path) -> dict[str, Any]:
 
 
 def featured_status(session: Session) -> dict[str, Any]:
-    imported = int(session.scalar(select(func.count()).select_from(DatasetRepository).where(DatasetRepository.dataset_id == FEATURED_ID)) or 0)
+    imported = _featured_imported_repository_count(session)
     status: dict[str, Any] = {
         "available": False,
         "dataset_id": FEATURED_ID,
@@ -183,7 +183,10 @@ def featured_status(session: Session) -> dict[str, Any]:
     status["imported_version"] = imported_meta.get("version")
     status["imported_bundle_hash"] = imported_meta.get("bundle_hash")
     status["imported_at"] = imported_meta.get("imported_at")
-    status["already_current"] = bool(status["available"] and imported_meta.get("bundle_hash") == status["bundle_hash"])
+    status["already_current"] = bool(
+        status["available"]
+        and _featured_bundle_is_current(imported_meta, status["bundle_hash"], imported, status["total_repositories"])
+    )
     status["imported_repositories"] = imported
     active_job = session.scalar(
         select(DatasetImportJob)
@@ -195,6 +198,52 @@ def featured_status(session: Session) -> dict[str, Any]:
     status["active_task"] = _dataset_job_summary(active_job) if active_job else None
     status["latest_task"] = _dataset_job_summary(latest_job) if latest_job else None
     return status
+
+
+def _featured_imported_repository_count(session: Session) -> int:
+    return int(session.scalar(
+        select(func.count(func.distinct(DatasetRepository.repository_id)))
+        .join(RepositorySnapshot, RepositorySnapshot.repository_id == DatasetRepository.repository_id)
+        .where(DatasetRepository.dataset_id == FEATURED_ID, RepositorySnapshot.valid.is_(True))
+    ) or 0)
+
+
+def _featured_bundle_is_current(
+    imported_meta: dict[str, Any],
+    bundle_hash: str | None,
+    imported_repositories: int,
+    total_repositories: int,
+) -> bool:
+    return (
+        imported_meta.get("bundle_hash") == bundle_hash
+        and imported_meta.get("complete", True) is not False
+        and imported_repositories >= total_repositories
+    )
+
+
+def invalidate_featured_import_for_repositories(session: Session, repository_ids: list[int]) -> set[int]:
+    featured_ids = set(session.scalars(
+        select(DatasetRepository.repository_id).where(
+            DatasetRepository.dataset_id == FEATURED_ID,
+            DatasetRepository.repository_id.in_(repository_ids),
+        )
+    ).all())
+    if not featured_ids:
+        return set()
+
+    session.execute(
+        delete(DatasetRepository).where(
+            DatasetRepository.dataset_id == FEATURED_ID,
+            DatasetRepository.repository_id.in_(featured_ids),
+        )
+    )
+    dataset = session.get(Dataset, FEATURED_ID)
+    if dataset:
+        imported_meta = _json_object(dataset.source_metadata_json)
+        if imported_meta:
+            imported_meta["complete"] = False
+            dataset.source_metadata_json = json.dumps(imported_meta, ensure_ascii=False)
+    return featured_ids
 
 
 def queue_featured_import(session: Session, idempotency_key: str | None = None) -> dict[str, Any]:
@@ -223,7 +272,12 @@ def queue_featured_import(session: Session, idempotency_key: str | None = None) 
             return _queue_response(existing_by_key)
     dataset = session.get(Dataset, FEATURED_ID)
     imported_meta = _json_object(dataset.source_metadata_json) if dataset else {}
-    if imported_meta.get("bundle_hash") == status["bundle_hash"]:
+    if _featured_bundle_is_current(
+        imported_meta,
+        status["bundle_hash"],
+        _featured_imported_repository_count(session),
+        status["total_repositories"],
+    ):
         session.commit()
         return {
             "task_id": None,
@@ -611,6 +665,7 @@ def _import_records(
         dataset.source_metadata_json = json.dumps({
             "version": metadata["version"],
             "bundle_hash": bundle_hash,
+            "complete": True,
             "data_as_of": metadata["data_as_of"],
             "schema_version": metadata["schema_version"],
             "imported_at": iso_z(now),

@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, PositiveInt, field_validator
 
 from backend.app.schemas.common import DTO, SourceMetadata
 
@@ -73,6 +73,37 @@ class RefreshResponse(DTO):
     task_id: str
     reused: bool
     status: Literal["queued", "running", "succeeded", "partial"]
+
+
+class ClearRepositoryDataRequest(DTO):
+    repository_ids: list[PositiveInt] = Field(min_length=1, max_length=100)
+    remove_from_library: bool = False
+
+    @field_validator("repository_ids")
+    @classmethod
+    def validate_distinct_repository_ids(cls, values: list[int]) -> list[int]:
+        if len(set(values)) != len(values):
+            raise ValueError("repository_ids must be unique")
+        return values
+
+
+class ClearedRepositoryData(DTO):
+    repository_id: int
+    removed_from_library: bool
+    removed_from_featured: bool
+    snapshots: int
+    activity_events: int
+    activity_windows: int
+    analysis_results: int
+    insight_runs: int
+    checkpoints: int
+    collection_logs: int
+    raw_archive_directory_removed: bool
+    collection_archive_directory_removed: bool
+
+
+class ClearRepositoryDataResponse(DTO):
+    repositories: list[ClearedRepositoryData]
 
 
 class AnalysisResponse(DTO):

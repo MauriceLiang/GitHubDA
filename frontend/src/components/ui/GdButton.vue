@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { LoaderCircle } from 'lucide-vue-next'
 
-withDefaults(defineProps<{ variant?: 'primary' | 'outline' | 'ghost'; size?: 'sm' | 'md'; disabled?: boolean; loading?: boolean }>(), {
+withDefaults(defineProps<{ variant?: 'primary' | 'outline' | 'ghost' | 'danger'; size?: 'sm' | 'md'; disabled?: boolean; loading?: boolean }>(), {
   variant: 'primary', size: 'md', disabled: false, loading: false,
 })
 </script>
@@ -16,6 +16,7 @@ withDefaults(defineProps<{ variant?: 'primary' | 'outline' | 'ghost'; size?: 'sm
       variant === 'primary' && 'bg-ink text-bg hover:opacity-90',
       variant === 'outline' && 'border border-line bg-panel hover:bg-soft',
       variant === 'ghost' && 'text-muted hover:bg-track hover:text-ink',
+      variant === 'danger' && 'border border-danger/30 bg-warnbg text-danger hover:opacity-80',
     ]"
   >
     <LoaderCircle v-if="loading" :size="14" class="shrink-0 animate-spin" aria-hidden="true" />
