@@ -85,6 +85,9 @@ class CollectionTask(Base):
     repository_id: Mapped[int] = mapped_column(ForeignKey("repositories.repository_id"), index=True)
     type: Mapped[str] = mapped_column(String(50), default="collect_repository", nullable=False)
     depth: Mapped[str] = mapped_column(String(10), nullable=False)
+    scope_kind: Mapped[str] = mapped_column(String(20), default="quick", server_default="quick", nullable=False)
+    scope_json: Mapped[str | None] = mapped_column(Text)
+    resume_after: Mapped[object | None] = mapped_column(DateTime, index=True)
     status: Mapped[str] = mapped_column(String(20), default="queued", nullable=False)
     phase: Mapped[str | None] = mapped_column(String(20))
     progress_percent: Mapped[float | None] = mapped_column(Float)
@@ -121,6 +124,29 @@ class TaskModuleProgress(Base):
     error_code: Mapped[str | None] = mapped_column(String(100))
     last_updated_at: Mapped[object] = mapped_column(DateTime, default=utc_now, server_default=func.current_timestamp(), nullable=False)
     attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class CollectionCheckpoint(Base):
+    __tablename__ = "collection_checkpoints"
+    __table_args__ = (
+        Index("ix_checkpoint_status_resume", "status", "resume_after"),
+        UniqueConstraint("repository_id", "module", "scope_fingerprint", name="uq_collection_checkpoint_scope"),
+    )
+
+    repository_id: Mapped[int] = mapped_column(ForeignKey("repositories.repository_id", ondelete="CASCADE"), primary_key=True)
+    module: Mapped[str] = mapped_column(String(20), primary_key=True)
+    scope_fingerprint: Mapped[str] = mapped_column(String(64), primary_key=True)
+    window_start: Mapped[object] = mapped_column(DateTime, nullable=False)
+    window_end: Mapped[object] = mapped_column(DateTime, nullable=False)
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("collection_tasks.task_id", ondelete="SET NULL"))
+    next_url: Mapped[str | None] = mapped_column(Text)
+    last_seen_key: Mapped[str | None] = mapped_column(String(100))
+    pages_fetched: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    records_written: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending", nullable=False)
+    resume_after: Mapped[object | None] = mapped_column(DateTime)
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    updated_at: Mapped[object] = mapped_column(DateTime, default=utc_now, server_default=func.current_timestamp(), nullable=False)
 
 
 class ActivityWindow(Base):
@@ -185,6 +211,17 @@ class WorkerStatus(Base):
     last_heartbeat_at: Mapped[object] = mapped_column(DateTime, nullable=False)
     started_at: Mapped[object] = mapped_column(DateTime, nullable=False)
     version: Mapped[str | None] = mapped_column(String(50))
+
+
+class ApiRateLimitState(Base):
+    __tablename__ = "api_rate_limit_state"
+
+    resource: Mapped[str] = mapped_column(String(30), primary_key=True)
+    limit: Mapped[int | None] = mapped_column(Integer)
+    remaining: Mapped[int | None] = mapped_column(Integer)
+    reset_at: Mapped[object | None] = mapped_column(DateTime)
+    retry_after: Mapped[object | None] = mapped_column(DateTime)
+    observed_at: Mapped[object] = mapped_column(DateTime, default=utc_now, nullable=False)
 
 
 class SamplingRun(Base):

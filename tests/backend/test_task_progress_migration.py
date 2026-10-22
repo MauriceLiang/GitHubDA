@@ -60,7 +60,7 @@ def test_0001_database_upgrades_to_task_progress_without_losing_tasks(tmp_path, 
         assert row == ("legacy-task", "succeeded", 75.0, "unknown", None, None)
         assert inspect(connection).has_table("task_module_progress")
         assert inspect(connection).has_table("application_settings")
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0004_application_settings"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0005_collection_checkpoints"
     upgraded.dispose()
 
 

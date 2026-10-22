@@ -6,7 +6,7 @@ InsightStatus = Literal["ready", "partial", "missing", "insufficient_samples", "
 
 class MetricQuality(BaseModel):
     status: InsightStatus
-    coverage: Literal["complete", "partial", "not_collected"]
+    coverage: Literal["complete", "partial", "budget_exhausted", "not_collected"]
     valid_samples: int = Field(ge=0)
     reason: str | None
     limit_reached: bool = False

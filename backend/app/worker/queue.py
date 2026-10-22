@@ -1,10 +1,10 @@
 from datetime import timedelta
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import case, delete, select, text
 from sqlalchemy.orm import Session
 
 from backend.app.core.clock import utc_now
-from backend.app.persistence.models import CollectionTask, TaskModuleProgress
+from backend.app.persistence.models import ApiRateLimitState, CollectionTask, TaskModuleProgress
 from backend.app.worker.progress import initialize_attempt_progress
 
 
@@ -57,6 +57,13 @@ def claim_next_task(session: Session, worker_id: str, lease_seconds: int) -> Col
         task.lease_owner = None
         task.lease_until = None
 
+    quota = session.get(ApiRateLimitState, "core")
+    if quota is not None and (quota.remaining == 0 or quota.retry_after is not None):
+        blocked_until = quota.retry_after or quota.reset_at
+        if blocked_until is not None and blocked_until > now:
+            session.commit()
+            return None
+
     active = session.scalar(
         select(CollectionTask.task_id).where(
             CollectionTask.status == "running",
@@ -68,7 +75,12 @@ def claim_next_task(session: Session, worker_id: str, lease_seconds: int) -> Col
         session.commit()
         return None
 
-    task = session.scalar(select(CollectionTask).where(CollectionTask.status == "queued").order_by(CollectionTask.created_at).limit(1))
+    task = session.scalar(
+        select(CollectionTask)
+        .where(CollectionTask.status == "queued", (CollectionTask.resume_after.is_(None) | (CollectionTask.resume_after <= now)))
+        .order_by(case((CollectionTask.scope_kind == "backfill", 1), else_=0), CollectionTask.created_at)
+        .limit(1)
+    )
     if task is None:
         session.commit()
         return None

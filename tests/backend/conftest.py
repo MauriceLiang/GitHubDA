@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from backend.app.api.dependencies import get_github_client, get_session
 from backend.app.main import app
 from backend.app.persistence.db import Base
+from backend.app.pipeline import collection_archive
 from backend.app.services.repositories import ensure_default_datasets
 
 
@@ -49,8 +50,13 @@ class FakeGitHub:
 
 
 @pytest.fixture
-def backend_client(tmp_path):
+def backend_client(tmp_path, monkeypatch):
     engine = create_engine(f"sqlite:///{tmp_path / 'backend-test.db'}", connect_args={"check_same_thread": False, "timeout": 5})
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    monkeypatch.setattr(collection_archive, "COLLECTED_ROOT", tmp_path / "collected-pages")
+    monkeypatch.setattr("backend.app.main.SessionLocal", factory)
+    monkeypatch.setattr("backend.app.worker.main.SessionLocal", factory)
+    monkeypatch.setattr("backend.app.worker.scheduler.SessionLocal", factory)
 
     @event.listens_for(engine, "connect")
     def enable_foreign_keys(connection, _record):
@@ -59,7 +65,6 @@ def backend_client(tmp_path):
         connection.execute("PRAGMA journal_mode=WAL")
 
     Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine, expire_on_commit=False)
     with factory() as session:
         ensure_default_datasets(session)
     fake_github = FakeGitHub()

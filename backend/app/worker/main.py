@@ -1,12 +1,13 @@
 import logging
 import threading
 import time
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from backend.app.core.config import get_settings
-from backend.app.integrations.github.client import GitHubClient
+from backend.app.integrations.github.client import GitHubClient, is_rate_limited_response, retry_after_seconds
 from backend.app.persistence.db import SessionLocal
-from backend.app.persistence.models import TaskModuleProgress
+from backend.app.persistence.models import ApiRateLimitState, TaskModuleProgress
 from backend.app.worker.executor import execute_task
 from backend.app.worker.queue import claim_next_task, heartbeat
 from backend.app.worker.scheduler import start_scheduler
@@ -14,6 +15,36 @@ from backend.app.worker.scheduler import start_scheduler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("repovantage.worker")
+
+
+def _persist_rate_limit_state(response) -> None:
+    resource = response.headers.get("X-RateLimit-Resource", "core")[:30] or "core"
+    limit = _header_int(response.headers.get("X-RateLimit-Limit"))
+    remaining = _header_int(response.headers.get("X-RateLimit-Remaining"))
+    reset_epoch = _header_int(response.headers.get("X-RateLimit-Reset"))
+    reset_at = datetime.fromtimestamp(reset_epoch, UTC).replace(tzinfo=None) if reset_epoch is not None else None
+    retry_seconds = retry_after_seconds(response)
+    limited = is_rate_limited_response(response)
+    if limited:
+        delay = retry_seconds if retry_seconds is not None else 60
+        retry_after = datetime.now(UTC).replace(tzinfo=None) + timedelta(seconds=delay)
+    else:
+        retry_after = None
+    with SessionLocal() as session:
+        row = session.get(ApiRateLimitState, resource)
+        if row is None:
+            row = ApiRateLimitState(resource=resource)
+            session.add(row)
+        row.limit = limit
+        row.remaining = remaining
+        row.reset_at = reset_at
+        row.retry_after = retry_after
+        row.observed_at = datetime.now(UTC).replace(tzinfo=None)
+        session.commit()
+
+
+def _header_int(value: str | None) -> int | None:
+    return int(value) if value and value.isdigit() else None
 
 
 def main() -> None:
@@ -72,7 +103,12 @@ def main() -> None:
                     max_pages = module_progress.page_cap if module_progress else None
                 finally:
                     progress_session.close()
-                with GitHubClient(request_id=task.task_id, max_pages=max_pages) as github:
+                with GitHubClient(
+                    request_id=task.task_id,
+                    max_pages=max_pages,
+                    unbounded=(task.scope_kind in {"window", "incremental"}),
+                    on_response=_persist_rate_limit_state,
+                ) as github:
                     execute_task(SessionLocal, task.task_id, github)
             except Exception:
                 logger.exception("Task %s failed outside executor", task.task_id)

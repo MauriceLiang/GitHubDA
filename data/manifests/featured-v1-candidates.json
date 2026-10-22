@@ -1,0 +1,23 @@
+{
+  "version": "featured-v1",
+  "status": "verified_public_candidates",
+  "verification_manifest": "data/manifests/featured-v1-verification.json",
+  "source_document": "RepoVantage_基础数据集与采集系统改造实施方案_v1.1.md",
+  "candidates": [
+    {"language": "Python", "full_name": "fastapi/fastapi", "inclusion_reason": "Web 框架活动、Issue/PR 处理与发布节奏"},
+    {"language": "Python", "full_name": "django/django", "inclusion_reason": "成熟大型项目的协作和维护"},
+    {"language": "Python", "full_name": "pallets/flask", "inclusion_reason": "体量相对适中的成熟框架"},
+    {"language": "JavaScript", "full_name": "react/react", "redirected_from": "facebook/react", "inclusion_reason": "大型前端生态与长期维护"},
+    {"language": "TypeScript", "full_name": "vuejs/core", "inclusion_reason": "Vue 核心项目及前端生态"},
+    {"language": "TypeScript", "full_name": "sveltejs/svelte", "inclusion_reason": "不同前端框架的活动对比"},
+    {"language": "Java", "full_name": "spring-projects/spring-boot", "inclusion_reason": "Java 服务端生态与版本发布"},
+    {"language": "Java", "full_name": "quarkusio/quarkus", "inclusion_reason": "Java 云原生框架"},
+    {"language": "Java", "full_name": "micronaut-projects/micronaut-core", "inclusion_reason": "同类 Java 框架比较"},
+    {"language": "Go", "full_name": "gin-gonic/gin", "inclusion_reason": "Go Web 框架"},
+    {"language": "Go", "full_name": "labstack/echo", "inclusion_reason": "Go Web 框架的维护和发布"},
+    {"language": "Go", "full_name": "gofiber/fiber", "inclusion_reason": "同类 Go 框架比较"},
+    {"language": "Rust", "full_name": "BurntSushi/ripgrep", "inclusion_reason": "Rust CLI 工具与维护节奏"},
+    {"language": "Rust", "full_name": "sharkdp/bat", "inclusion_reason": "Rust CLI 工具"},
+    {"language": "Rust", "full_name": "sharkdp/fd", "inclusion_reason": "Rust CLI 工具"}
+  ]
+}

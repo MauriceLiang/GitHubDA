@@ -4,6 +4,16 @@ __pycache__/
 .pytest_cache/
 data/*
 !data/.gitkeep
+!data/manifests/
+!data/manifests/**
+!data/datasets/
+data/datasets/*
+!data/datasets/featured-v1/
+!data/datasets/featured-v1/**
+/data/collected/
+/data/raw/
+/data/*.db
+/data/*.sqlite
 *.py[cod]
 docs/*
 !docs/ux/

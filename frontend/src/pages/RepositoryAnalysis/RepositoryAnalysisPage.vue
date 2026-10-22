@@ -38,11 +38,11 @@ watch(repoId, (id) => analysisStore.remember(id), { immediate: true })
 const notAnalyzed = computed(() => data.value?.repository.status === 'idle')
 const failed = computed(() => data.value?.repository.status === 'failed' || Boolean(error.value))
 
-async function refresh() {
+async function refresh(scopeKind: 'quick' | 'window' = 'quick') {
   refreshing.value = true
   try {
-    await source.refreshRepository(repoId.value)
-    ui.toast('深度采集任务已排队，可在任务页查看进度')
+    await source.refreshRepository(repoId.value, scopeKind)
+    ui.toast(scopeKind === 'window' ? '完整时间窗采集任务已排队；如遇限流会保存进度后自动恢复' : '快速采集任务已排队，可在任务页查看进度')
     void router.push('/tasks')
   } catch (cause) {
     ui.toast(cause instanceof Error ? cause.message : '启动采集失败')

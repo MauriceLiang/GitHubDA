@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "repository_id",
+    "window_start",
+    "window_end",
+    "coverage",
+    "modules"
+  ],
+  "properties": {
+    "repository_id": {
+      "type": "integer"
+    },
+    "coverage": {
+      "enum": [
+        "complete",
+        "partial"
+      ]
+    },
+    "modules": {
+      "type": "object"
+    }
+  }
+}

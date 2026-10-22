@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "dataset_id": "featured-default",
+  "version": "featured-v1.0.0",
+  "data_as_of": "2026-10-22T08:32:31Z",
+  "generated_at": "2026-10-22T09:02:44Z",
+  "quality_check": "passed",
+  "source": "GitHub REST API, collected and stored locally by RepoVantage",
+  "scope": "最近 90 天活动窗口及最近 365 天正式 Release；不代表 GitHub 全历史。",
+  "bundle": {
+    "schema_version": 1,
+    "sha256_manifest": "data/datasets/featured-v1/SHA256SUMS",
+    "hash_sha256_of_sha256_manifest": "b4cc448822d7cd1088448f5594a1c53ceb59e904b8f1f12dcf25289dfdfb00ed",
+    "zip_path": "data/datasets/featured-v1.zip",
+    "zip_bytes": 3573271,
+    "zip_sha256": "36bc238a89450998015a18a63af0ac877b0741feef632e03e25c9c45ef6cff35",
+    "checksummed_file_count": 20
+  },
+  "repositories": {
+    "unique_count": 15,
+    "featured_members": 15,
+    "duplicate_memberships": 0
+  },
+  "modules": {
+    "commits": {
+      "coverage": {"complete": 15, "partial": 0, "budget_exhausted": 0, "deferred": 0, "unavailable": 0, "not_collected": 0},
+      "observed_records": 7125,
+      "accepted_events": 7125,
+      "rejected_records": 0,
+      "invalid_event_times": 0,
+      "duplicate_records": 0,
+      "filtered_pr_records": 0,
+      "pages": 81,
+      "bundled_event_records": 7125,
+      "bundled_detail_records": 7125
+    },
+    "issues": {
+      "coverage": {"complete": 15, "partial": 0, "budget_exhausted": 0, "deferred": 0, "unavailable": 0, "not_collected": 0},
+      "observed_records": 12000,
+      "accepted_events": 4296,
+      "rejected_records": 0,
+      "invalid_event_times": 0,
+      "duplicate_records": 0,
+      "filtered_pr_records": 7704,
+      "pages": 127,
+      "bundled_event_records": 4296,
+      "bundled_detail_records": 4296
+    },
+    "pulls": {
+      "coverage": {"complete": 15, "partial": 0, "budget_exhausted": 0, "deferred": 0, "unavailable": 0, "not_collected": 0},
+      "observed_records": 7800,
+      "accepted_events": 7800,
+      "rejected_records": 0,
+      "invalid_event_times": 0,
+      "duplicate_records": 0,
+      "filtered_pr_records": 0,
+      "pages": 78,
+      "bundled_event_records": 7800,
+      "bundled_detail_records": 7800
+    },
+    "releases": {
+      "coverage": {"complete": 15, "partial": 0, "budget_exhausted": 0, "deferred": 0, "unavailable": 0, "not_collected": 0},
+      "observed_records": 3232,
+      "accepted_events": 3232,
+      "rejected_records": 0,
+      "invalid_event_times": 0,
+      "duplicate_records": 0,
+      "filtered_pr_records": 0,
+      "pages": 42,
+      "bundled_event_records": 3232,
+      "bundled_detail_records": 3232
+    }
+  },
+  "collection_totals": {
+    "successful_page_fetches_including_profile": 343,
+    "elapsed_seconds_sum_of_modules": 390.699,
+    "successful_tasks": 15,
+    "failed_or_missing_tasks": 0,
+    "rate_limits_observed": 0
+  },
+  "collection_by_repository": [
+    {"repository": "fastapi/fastapi", "successful_page_fetches": {"profile": 1, "commits": 5, "issues": 5, "pulls": 6, "releases": 4}, "elapsed_seconds": 21.302},
+    {"repository": "django/django", "successful_page_fetches": {"profile": 1, "commits": 3, "issues": 7, "pulls": 6, "releases": 1}, "elapsed_seconds": 19.125},
+    {"repository": "pallets/flask", "successful_page_fetches": {"profile": 1, "commits": 1, "issues": 2, "pulls": 2, "releases": 1}, "elapsed_seconds": 8.738},
+    {"repository": "react/react", "successful_page_fetches": {"profile": 1, "commits": 2, "issues": 14, "pulls": 6, "releases": 2}, "elapsed_seconds": 27.888},
+    {"repository": "vuejs/core", "successful_page_fetches": {"profile": 1, "commits": 2, "issues": 14, "pulls": 8, "releases": 4}, "elapsed_seconds": 29.626},
+    {"repository": "sveltejs/svelte", "successful_page_fetches": {"profile": 1, "commits": 2, "issues": 7, "pulls": 4, "releases": 7}, "elapsed_seconds": 23.922},
+    {"repository": "spring-projects/spring-boot", "successful_page_fetches": {"profile": 1, "commits": 16, "issues": 15, "pulls": 4, "releases": 4}, "elapsed_seconds": 39.599},
+    {"repository": "quarkusio/quarkus", "successful_page_fetches": {"profile": 1, "commits": 24, "issues": 29, "pulls": 17, "releases": 6}, "elapsed_seconds": 101.06},
+    {"repository": "micronaut-projects/micronaut-core", "successful_page_fetches": {"profile": 1, "commits": 10, "issues": 19, "pulls": 11, "releases": 5}, "elapsed_seconds": 48.452},
+    {"repository": "gin-gonic/gin", "successful_page_fetches": {"profile": 1, "commits": 1, "issues": 3, "pulls": 2, "releases": 1}, "elapsed_seconds": 9.18},
+    {"repository": "labstack/echo", "successful_page_fetches": {"profile": 1, "commits": 1, "issues": 2, "pulls": 2, "releases": 2}, "elapsed_seconds": 8.961},
+    {"repository": "gofiber/fiber", "successful_page_fetches": {"profile": 1, "commits": 11, "issues": 4, "pulls": 4, "releases": 2}, "elapsed_seconds": 25.457},
+    {"repository": "BurntSushi/ripgrep", "successful_page_fetches": {"profile": 1, "commits": 1, "issues": 1, "pulls": 2, "releases": 1}, "elapsed_seconds": 8.305},
+    {"repository": "sharkdp/bat", "successful_page_fetches": {"profile": 1, "commits": 1, "issues": 3, "pulls": 2, "releases": 1}, "elapsed_seconds": 11.528},
+    {"repository": "sharkdp/fd", "successful_page_fetches": {"profile": 1, "commits": 1, "issues": 2, "pulls": 2, "releases": 1}, "elapsed_seconds": 7.556}
+  ],
+  "privacy_scan": {
+    "method": "Parsed JSON strings and document text, not serialized escape sequences",
+    "emails_found": 0,
+    "credential_patterns_found": 0,
+    "machine_absolute_paths_found": 0,
+    "raw_archives_in_bundle": false,
+    "issue_or_pr_body_fields_in_bundle": false
+  },
+  "warnings": [],
+  "limitations": [
+    "事件记录只覆盖明确标注的 90 天活动窗口和 365 天 Release 窗口。",
+    "精选集合是经审核的案例集合，不是 GitHub 全体仓库的随机样本。",
+    "成功页数与模块耗时来自采集进度；不包含失败请求或所有传输层重试。"
+  ]
+}

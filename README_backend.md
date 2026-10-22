@@ -14,7 +14,7 @@ cp .env.example .env
 
 在 `.env` 中设置仅本机使用的 `INTERNAL_API_KEY`。`GITHUB_TOKEN` 可选；未配置时使用 GitHub 匿名额度。密钥只由 API 和 Worker 进程读取。
 
-默认 SQLite 文件固定解析到仓库根目录的 `data/app.db`，不受启动时当前目录影响。原始压缩 JSON 写入 `data/raw/`。可用 `DATABASE_URL` 与 `RAW_DATA_DIR` 覆盖路径。
+默认 SQLite 文件固定解析到仓库根目录的 `data/app.db`，不受启动时当前目录影响。兼容旧版的原始压缩 JSON 写入 `data/raw/`；新版逐页采集归档写入 Git 忽略的 `data/collected/`，数据库检查点是断点续传的权威状态。精选数据包已随项目提供在 `data/datasets/featured-v1/`，对应分发 ZIP 为 `data/datasets/featured-v1.zip`。当前包包含 15 个公开仓库，活动数据窗口为 90 天、正式 Release 窗口为 365 天，不代表 GitHub 全历史。可用 `DATABASE_URL` 与 `RAW_DATA_DIR` 覆盖旧版归档路径。
 
 ## 数据库与启动
 
@@ -76,13 +76,52 @@ python -m backend.app.worker.main
 python -m scripts.build_research_sample candidates.json --dataset-id research-2026-v1
 ```
 
+候选清单由 GitHub Search 采集器生成。默认对每个语言/Star 分层按最近更新、Star 降序和 Star 升序各取 20 条并按仓库 ID 去重（最多 900 条候选）；这会产生最多 45 次 Search 请求，运行前应检查当前 GitHub 配额。Search 的排序结果可能重叠，manifest 会记录每层的实际候选数和不足目标，不能把候选目标当作已保证数量。采集器只生成待人工复核的 manifest，不能直接构建研究样本：
+
+```bash
+python -m scripts.collect_research_candidates --per-bucket 20 --output data/manifests/research-candidates.json
+```
+
+审核候选的公开状态、项目类型和存在时间后，填写 `reviewed_eligible` 与 `inclusion_reason`，再运行上面的冻结命令。采集器不会自动替用户消耗配额或冻结样本。
+
 脚本按 manifest 中的语言/Star 分层配额和固定随机种子抽取，并在 `sampling_runs` 中保留每条候选的纳入或排除原因；候选不够时报告未填满配额。已冻结版本不会被覆盖，规则变化时请使用新的 `dataset_id`。GitHub Search 不完整或候选范围有限时，结果只能称为分层配额样本，不能代表 GitHub 全体。
 
 ## API
 
 契约为 `docs/03_API接口契约_v1.0.md`。实现覆盖 API-01 至 API-20（API-01 为 `/healthz`）：搜索/解析、分析库、仓库快照与分析、任务/重试、数据集、总览/研究统计/质量、比较和 CSV 导出。JSON 成功响应采用 `data`/`meta`，错误采用 `error`/`request_id`；删除成员关系返回空的 204，CSV 为 UTF-8 文本。
 
-Worker 对基础仓库档案采集真实快照。深度采集限定在近期窗口并遵守分页上限；未完整分页或上游端点失败时，返回 `partial` 与 null 指标。星标时间序列只包含真实采集日期，不插值。
+Worker 对基础仓库档案采集真实快照。深度任务支持 `quick`、`window`、后台 `incremental` 和人工排队的 `backfill`：快速范围遵守用户页数预算；完整窗口和增量同步跟随所有分页；增量同步仅对最近分析运行的四个活动模块都完整的仓库排队，按 7 天重叠区间查询并从本地去重事件表重新计算滚动窗口。Commit/Issue 使用时间查询，PR 按更新时间倒序并在重叠边界停止，Release 端点逐次复核并按数字 ID 去重。每日增量同步在 04:00 UTC 排队，日常基础资料刷新在 03:00 UTC 排队。
+
+历史回填只针对五个试点仓库提供 CLI 入口，默认仅预览本地数据库中已存在的仓库；加 `--queue` 才会写入任务队列。每次回填按用户页数预算让出 Worker，保留检查点并继续排队，普通任务优先。CLI 本身不访问 GitHub；实际请求只会在 Worker 执行时发生。预算耗尽、部分覆盖和配额延期不会被标为完整；相关进度和采集范围可在任务详情中查看。星标时间序列只包含真实采集日期，不插值。
+
+为现有数据集成员排队采集任务（真正的 GitHub 请求由已运行的 Worker 执行）：
+
+```bash
+python -m scripts.collect_dataset featured-default --scope window
+```
+
+预览五个历史回填试点（不会写入任务）：
+
+```bash
+python -m scripts.queue_history_pilot
+```
+
+审核预览后，使用 `--queue` 将可用仓库排入后台队列；GitHub 请求由 Worker 之后执行：
+
+```bash
+python -m scripts.queue_history_pilot --queue
+```
+
+需要更新精选包时，可生成、校验和导出数据；CLI 导入会写入当前 `DATABASE_URL` 指向的数据库：
+
+```bash
+python -m scripts.build_featured_bundle --version featured-v1.0.0
+python -m scripts.verify_dataset_bundle data/datasets/featured-v1
+python -m scripts.export_dataset_bundle data/datasets/featured-v1 --output data/datasets/featured-v1.zip --force
+python -m scripts.import_dataset_bundle data/datasets/featured-v1.zip
+```
+
+打包器要求 `featured-default` 恰有 15 个已审核成员，且本地具备快照和分析数据；不会生成虚构的演示记录。仓库页的“导入精选仓库”按钮只读取校验通过的本地目录，不触发 GitHub 请求；“下载数据包”按钮通过 `GET /api/v1/datasets/featured/export` 下载与该目录校验一致的 ZIP。精选数据集状态由 `GET /api/v1/datasets/featured/status` 提供，导入由 `POST /api/v1/datasets/featured/import` 执行。
 
 ## 验证与诊断
 

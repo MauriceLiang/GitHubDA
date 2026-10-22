@@ -1,0 +1,85 @@
+{
+  "pilot_id": "history-backfill-v1-2026-10-22",
+  "status": "checkpoint_validation_complete_full_history_incomplete",
+  "observed_at": "2026-10-22T09:02:44Z",
+  "source": "GitHub REST API, read-only collection in an isolated temporary database",
+  "database_scope": "isolated temporary SQLite database; the application database was not modified",
+  "window_policy": {
+    "start": "repository.created_at",
+    "end": "2026-10-22T08:36:45Z",
+    "page_cap_per_module_per_attempt": 10,
+    "resume_policy": "resume from the persisted next-page URL on a later worker attempt"
+  },
+  "results": [
+    {
+      "repository": "pallets/flask",
+      "repository_id": 596892,
+      "window_start": "2010-04-06T11:11:59Z",
+      "window_end": "2026-10-22T08:36:45Z",
+      "attempts_observed": 3,
+      "modules": {
+        "commits": {"status": "budget_exhausted", "pages_fetched": 30, "records_saved": 3000, "next_page_saved": true},
+        "issues": {"status": "budget_exhausted", "pages_fetched": 30, "records_saved": 3000, "next_page_saved": true},
+        "pulls": {"status": "budget_exhausted", "pages_fetched": 20, "records_saved": 2000, "next_page_saved": true},
+        "releases": {"status": "complete", "pages_fetched": 1, "records_saved": 38, "next_page_saved": false}
+      }
+    },
+    {
+      "repository": "vuejs/core",
+      "repository_id": 137078487,
+      "window_start": "2018-06-12T13:49:36Z",
+      "window_end": "2026-10-22T08:36:45Z",
+      "attempts_observed": 2,
+      "modules": {
+        "commits": {"status": "budget_exhausted", "pages_fetched": 20, "records_saved": 2000, "next_page_saved": true},
+        "issues": {"status": "budget_exhausted", "pages_fetched": 20, "records_saved": 2000, "next_page_saved": true},
+        "pulls": {"status": "budget_exhausted", "pages_fetched": 20, "records_saved": 2000, "next_page_saved": true},
+        "releases": {"status": "complete", "pages_fetched": 4, "records_saved": 303, "next_page_saved": false}
+      }
+    },
+    {
+      "repository": "spring-projects/spring-boot",
+      "repository_id": 6296790,
+      "window_start": "2012-10-19T15:02:57Z",
+      "window_end": "2026-10-22T08:36:45Z",
+      "attempts_observed": 1,
+      "modules": {
+        "commits": {"status": "budget_exhausted", "pages_fetched": 10, "records_saved": 1000, "next_page_saved": true},
+        "issues": {"status": "budget_exhausted", "pages_fetched": 10, "records_saved": 1000, "next_page_saved": true},
+        "pulls": {"status": "budget_exhausted", "pages_fetched": 10, "records_saved": 1000, "next_page_saved": true},
+        "releases": {"status": "complete", "pages_fetched": 4, "records_saved": 356, "next_page_saved": false}
+      }
+    },
+    {
+      "repository": "labstack/echo",
+      "repository_id": 31504491,
+      "window_start": "2015-03-01T17:43:01Z",
+      "window_end": "2026-10-22T08:36:45Z",
+      "attempts_observed": 1,
+      "modules": {
+        "commits": {"status": "budget_exhausted", "pages_fetched": 10, "records_saved": 1000, "next_page_saved": true},
+        "issues": {"status": "budget_exhausted", "pages_fetched": 10, "records_saved": 1000, "next_page_saved": true},
+        "pulls": {"status": "budget_exhausted", "pages_fetched": 10, "records_saved": 1000, "next_page_saved": true},
+        "releases": {"status": "complete", "pages_fetched": 2, "records_saved": 128, "next_page_saved": false}
+      }
+    },
+    {
+      "repository": "sharkdp/fd",
+      "repository_id": 90793418,
+      "window_start": "2017-05-09T21:27:10Z",
+      "window_end": "2026-10-22T08:36:45Z",
+      "attempts_observed": 1,
+      "modules": {
+        "commits": {"status": "budget_exhausted", "pages_fetched": 10, "records_saved": 1000, "next_page_saved": true},
+        "issues": {"status": "budget_exhausted", "pages_fetched": 10, "records_saved": 1000, "next_page_saved": true},
+        "pulls": {"status": "budget_exhausted", "pages_fetched": 10, "records_saved": 1000, "next_page_saved": true},
+        "releases": {"status": "complete", "pages_fetched": 1, "records_saved": 45, "next_page_saved": false}
+      }
+    }
+  ],
+  "conclusion": {
+    "checkpoint_validation": "passed for all five repositories: every budget-exhausted Commit, Issue, and PR module persisted a next-page URL; Release listing completed within the observed endpoint results",
+    "full_history_status": "incomplete; the pilot intentionally stopped after confirming resumable page checkpoints",
+    "coverage_warning": "These endpoint results do not mean all GitHub history was recovered. REST API visibility and repository references bound the observable history; unreachable commits and deleted or inaccessible records cannot be inferred."
+  }
+}

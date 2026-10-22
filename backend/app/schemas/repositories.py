@@ -66,6 +66,7 @@ class AddRepositoryResponse(DTO):
 class RefreshRequest(DTO):
     depth: Literal["basic", "deep"] = "basic"
     force: bool = False
+    scope_kind: Literal["quick", "window"] = "quick"
 
 
 class RefreshResponse(DTO):

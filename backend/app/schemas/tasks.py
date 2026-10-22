@@ -8,7 +8,7 @@ from backend.app.schemas.common import DTO
 class TaskModuleProgressResponse(DTO):
     name: Literal["profile", "commits", "issues", "pulls", "releases"]
     status: Literal["pending", "running", "complete", "partial", "failed", "skipped"]
-    coverage: Literal["complete", "partial", "not_collected", "unknown"]
+    coverage: Literal["complete", "partial", "budget_exhausted", "deferred", "not_collected", "unknown"]
     pages_fetched: int = Field(default=0, ge=0)
     page_cap: int | None = Field(default=None, ge=1)
     observed_items: int = Field(default=0, ge=0)
@@ -21,6 +21,9 @@ class TaskResponse(DTO):
     repository_id: int
     type: str
     depth: Literal["basic", "deep"]
+    scope_kind: Literal["quick", "window", "incremental", "backfill"] = "quick"
+    window_start: str | None = None
+    window_end: str | None = None
     status: Literal["queued", "running", "succeeded", "partial", "failed", "cancelled"]
     phase: Literal["collecting", "cleaning", "analyzing", "persisting"] | None
     progress_percent: float | None = Field(ge=0, le=100)
@@ -29,6 +32,7 @@ class TaskResponse(DTO):
     created_at: str
     started_at: str | None
     finished_at: str | None
+    resume_after: str | None = None
     error: dict[str, Any] | None
     progress_kind: Literal["stages", "unknown"] = "unknown"
     progress_updated_at: str | None = None

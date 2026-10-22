@@ -245,6 +245,27 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
     return REPOSITORIES.map(summaryOf)
   }
 
+  async getFeaturedDatasetStatus() {
+    return {
+      available: false,
+      datasetId: 'featured-default',
+      version: null,
+      totalRepositories: 0,
+      importedRepositories: 0,
+      dataAsOf: null,
+      bundleHash: null,
+      reason: '演示数据源不包含可导入的精选数据包。',
+    }
+  }
+
+  async importFeaturedDataset(): Promise<never> {
+    throw new Error('演示数据源不支持精选数据导入')
+  }
+
+  async exportFeaturedDataset(): Promise<never> {
+    throw new Error('演示数据源不提供精选数据包下载')
+  }
+
   async getActivityChangePercent(id: string): Promise<number | null> {
     return repoSeed(id)?.activityDelta ?? null
   }

@@ -369,10 +369,46 @@ export interface TaskItem {
   stage: string
   progressPercent?: number | null
   progressKind?: 'stages' | 'unknown'
+  scopeKind?: 'quick' | 'window' | 'incremental' | 'backfill'
+  windowStart?: string | null
+  windowEnd?: string | null
+  resumeAfter?: string | null
+  modules?: {
+    name: string
+    status: string
+    coverage: string
+    pagesFetched: number
+    pageCap: number | null
+    observedItems: number
+    errorCode?: string | null
+  }[]
   processed?: number
   total?: number
   updatedAt: string
   error?: string
+}
+
+export interface FeaturedDatasetStatus {
+  available: boolean
+  datasetId: string
+  version: string | null
+  totalRepositories: number
+  importedRepositories: number
+  dataAsOf: string | null
+  bundleHash: string | null
+  reason: string | null
+}
+
+export interface FeaturedDatasetImportResult {
+  datasetId: string
+  version: string
+  bundleHash: string
+  importedCount: number
+  alreadyPresentCount: number
+  snapshotCount: number
+  eventCount: number
+  warningCount: number
+  skippedCount: number
 }
 
 export interface CollectionSettings {

@@ -16,6 +16,11 @@ const analysis = useAnalysisStore()
 const ui = useUiStore()
 const source = useDataSource()
 const exporting = ref(false)
+const collectionScope = ref<'quick' | 'window'>('quick')
+const collectionScopeOptions = [
+  { value: 'quick', label: '快速', hint: '按设置的页数预算采集，预算耗尽时标记为部分覆盖' },
+  { value: 'window', label: '完整窗口', hint: '遍历固定时间窗；遇到 GitHub 限流时保存进度并延迟恢复' },
+]
 const statusMeta = {
   ready: { text: '已完成', variant: 'default' as const },
   partial: { text: '部分数据', variant: 'warn' as const },
@@ -28,7 +33,7 @@ const windowOptions = [
   { value: 90, label: '90 天' },
   { value: 180, label: '180 天', disabled: true, hint: '当前后端最多提供 90 天活动分析' },
 ]
-const emit = defineEmits<{ refresh: [] }>()
+const emit = defineEmits<{ refresh: [scopeKind: 'quick' | 'window'] }>()
 const setWindow = (value: string | number) => analysis.setWindow(value as TimeWindow)
 
 function toggleCompare() {
@@ -78,7 +83,11 @@ async function exportCsv() {
     <div class="flex flex-wrap items-center gap-2">
       <GdSegmented :model-value="analysis.timeWindow" :options="windowOptions" @update:model-value="setWindow" />
       <GdButton variant="outline" @click="toggleCompare"><GitCompare :size="14" /> {{ analysis.compareIds.includes(repository.id) ? '移出比较' : '加入比较' }}</GdButton>
-      <GdButton :disabled="refreshing" @click="emit('refresh')"><RefreshCw :size="14" /> {{ refreshing ? '排队中…' : '更新分析' }}</GdButton>
+      <div class="flex items-center gap-1.5">
+        <span class="text-[11px] text-muted">采集范围</span>
+        <GdSegmented v-model="collectionScope" size="sm" :options="collectionScopeOptions" />
+      </div>
+      <GdButton :disabled="refreshing" @click="emit('refresh', collectionScope)"><RefreshCw :size="14" /> {{ refreshing ? '排队中…' : '更新分析' }}</GdButton>
       <GdIconButton label="导出聚合 CSV" :disabled="exporting" @click="exportCsv"><Download :size="16" /></GdIconButton>
     </div>
   </div>
