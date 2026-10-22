@@ -13,7 +13,7 @@ from backend.app.worker.scheduler import start_scheduler
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-logger = logging.getLogger("githubda.worker")
+logger = logging.getLogger("repovantage.worker")
 
 
 def main() -> None:

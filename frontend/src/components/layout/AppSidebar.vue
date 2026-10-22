@@ -31,7 +31,7 @@ const recent = computed(() =>
         <FolderGit2 :size="14" />
       </span>
       <div class="leading-tight">
-        <b class="text-[14.5px] font-semibold">GitHubDA</b>
+        <b class="text-[14.5px] font-semibold">RepoVantage</b>
         <span class="block text-[11px] text-muted">开源项目分析</span>
       </div>
     </div>

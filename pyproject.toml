@@ -3,9 +3,9 @@ requires = ["hatchling>=1.25,<2"]
 build-backend = "hatchling.build"
 
 [project]
-name = "githubda"
+name = "repovantage"
 version = "0.1.0"
-description = "GitHub repository analysis backend"
+description = "RepoVantage backend for GitHub repository analysis"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "alembic>=1.13,<2",

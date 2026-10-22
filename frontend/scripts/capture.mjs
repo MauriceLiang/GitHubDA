@@ -26,7 +26,7 @@ const browser = await puppeteer.launch({
 for (const theme of ['light', 'dark']) {
   const page = await browser.newPage()
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 })
-  await page.evaluateOnNewDocument((t) => localStorage.setItem('githubda-theme', t), theme)
+  await page.evaluateOnNewDocument((t) => localStorage.setItem('repovantage-theme', t), theme)
   await mkdir(`docs/screenshots/${theme}`, { recursive: true })
   for (const [name, path] of pages) {
     await page.goto(BASE + path, { waitUntil: 'networkidle0' })

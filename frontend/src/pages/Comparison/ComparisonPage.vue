@@ -61,7 +61,7 @@ const entryWindow = (entry: (typeof entries.value)[number]) => entry.windowStart
 async function exportComparison() {
   exporting.value = true
   try {
-    downloadBlob(await source.exportComparison(analysis.compareIds, comparisonMode.value), 'githubda-comparison.csv')
+    downloadBlob(await source.exportComparison(analysis.compareIds, comparisonMode.value), 'repovantage-comparison.csv')
   } catch (cause) {
     ui.toast(cause instanceof Error ? cause.message : '导出比较结果失败')
   } finally {

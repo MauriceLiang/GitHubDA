@@ -1,5 +1,5 @@
 /**
- * Front-end data model for GitHubDA.
+ * Front-end data model for RepoVantage.
  *
  * These types describe what the UI needs. API payloads are adapted in
  * httpRepositoryDataSource.ts; unavailable backend values stay null.

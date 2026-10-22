@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 
-logger = logging.getLogger("githubda.worker.telemetry")
+logger = logging.getLogger("repovantage.worker.telemetry")
 
 
 def request_metrics_delta(

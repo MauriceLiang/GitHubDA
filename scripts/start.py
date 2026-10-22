@@ -46,7 +46,7 @@ def ensure_api_key() -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="构建 Vue 前端并启动 GitHubDA API 与 Worker")
+    parser = argparse.ArgumentParser(description="构建 Vue 前端并启动 RepoVantage API 与 Worker")
     parser.add_argument("--host", "--api-host", "--frontend-host", dest="host", default="127.0.0.1", help="应用监听地址，只允许本机回环地址")
     parser.add_argument("--port", "--api-port", "--frontend-port", dest="port", type=int, default=8501, help="应用地址端口，默认 8501")
     return parser.parse_args()
@@ -153,7 +153,7 @@ def main() -> int:
     except ValueError:
         bind_address = None
     if bind_address is None or not bind_address.is_loopback:
-        print("GitHubDA 新前端仅支持绑定本机回环地址（127.0.0.1）。", file=sys.stderr, flush=True)
+        print("RepoVantage 新前端仅支持绑定本机回环地址（127.0.0.1）。", file=sys.stderr, flush=True)
         return 2
     stop = threading.Event()
     processes: list[tuple[str, subprocess.Popen[bytes]]] = []
@@ -202,7 +202,7 @@ def main() -> int:
 
         wait_for_http("Vue 前端", f"{api_url}/", api, stop)
 
-        print(f"GitHubDA 已启动：前端 {api_url}，API 文档 {api_url}/docs", flush=True)
+        print(f"RepoVantage 已启动：前端 {api_url}，API 文档 {api_url}/docs", flush=True)
         while not stop.wait(0.25):
             for name, process in processes:
                 return_code = process.poll()
@@ -211,10 +211,10 @@ def main() -> int:
     except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
         if not stop.is_set():
             failed = True
-            print(f"GitHubDA 启动失败：{exc}", file=sys.stderr, flush=True)
+            print(f"RepoVantage 启动失败：{exc}", file=sys.stderr, flush=True)
     finally:
         if processes:
-            print("正在停止 GitHubDA 服务…", flush=True)
+            print("正在停止 RepoVantage 服务…", flush=True)
             stop_processes(processes)
 
     return 1 if failed else 0

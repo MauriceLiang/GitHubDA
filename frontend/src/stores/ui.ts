@@ -9,7 +9,7 @@ export interface Toast {
   message: string
 }
 
-const stored = (typeof localStorage !== 'undefined' && localStorage.getItem('githubda-theme')) as ThemeMode | null
+const stored = (typeof localStorage !== 'undefined' && (localStorage.getItem('repovantage-theme') ?? localStorage.getItem('githubda-theme'))) as ThemeMode | null
 
 export const useUiStore = defineStore('ui', () => {
   const theme = ref<ThemeMode>(stored ?? (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))
@@ -21,7 +21,8 @@ export const useUiStore = defineStore('ui', () => {
 
   function applyTheme() {
     document.documentElement.classList.toggle('dark', isDark.value)
-    localStorage.setItem('githubda-theme', theme.value)
+    localStorage.setItem('repovantage-theme', theme.value)
+    localStorage.removeItem('githubda-theme')
   }
   watch(theme, applyTheme, { immediate: true })
 

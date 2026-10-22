@@ -17,7 +17,7 @@ from backend.app.core.exceptions import AppError
 
 
 router = APIRouter(prefix="/api/browser", tags=["browser"])
-SESSION_COOKIE = "githubda_browser_session"
+SESSION_COOKIE = "repovantage_browser_session"
 SESSION_TTL_SECONDS = 1800
 MAX_REQUEST_BYTES = 1_000_000
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -187,7 +187,7 @@ async def proxy_api(path: str, request: Request, browser_session: BrowserSession
 
     try:
         transport = httpx.ASGITransport(app=request.app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://githubda.internal", timeout=25.0) as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://repovantage.internal", timeout=25.0) as client:
             upstream = await client.request(request.method, target, headers=headers, content=body or None)
     except httpx.RequestError:
         return _security_error(request, 503, "BACKEND_UNAVAILABLE", "本机 API 暂时不可用")

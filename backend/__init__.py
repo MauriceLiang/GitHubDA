@@ -1,1 +1,1 @@
-"""GitHubDA backend package."""
+"""RepoVantage backend package."""

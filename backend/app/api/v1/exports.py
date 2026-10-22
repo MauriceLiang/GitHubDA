@@ -69,5 +69,5 @@ def export_comparison_csv(
                 pr_metric["valid_samples"], release_metric["value"], commit_metric["quality"], repo["analyzed_at"],
             ])
     content = "\ufeff" + output.getvalue()
-    filename = f"githubda_comparison_{date.today().isoformat()}.csv"
+    filename = f"repovantage_comparison_{date.today().isoformat()}.csv"
     return Response(content=content, media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
