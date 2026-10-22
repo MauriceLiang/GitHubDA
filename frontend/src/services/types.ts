@@ -278,6 +278,16 @@ export interface Observation {
 }
 
 export interface RepositoryAnalysis {
+  /** Coverage proof and current event-store calculation have separate provenance. */
+  provenance?: {
+    calculationBasis: string
+    calculatedAt: string | null
+    coverageRunId: string | null
+    coverageAnalyzedAt: string | null
+    coverageSourceTaskIds: string[]
+    coverageArchivePaths: string[]
+    eventSourceTaskIds: string[]
+  }
   repository: RepositorySummary
   metrics: MetricSet
   /** Weekly commit series (main chart). */
