@@ -117,6 +117,7 @@ def _stored_window_events(session: Session, repository_id: int, start, end) -> d
         events[module] = [{
             "event_type": item.event_type,
             "source_item_id": item.source_item_id,
+            "source_task_id": item.source_task_id,
             "event_at": item.event_at,
             "created_at": item.created_at,
             "closed_at": item.closed_at,
@@ -172,11 +173,17 @@ def repository_insights(session, repository_id, window_days=90):
         return {
             "repository_id": repository_id, "run_id": None, "metric_version": METRIC_VERSION,
             "status": "missing", "window_start": None, "window_end": None, "timezone": "UTC",
-            "analyzed_at": iso_z(runs[0].analyzed_at) if runs else None,
+            "analyzed_at": None,
             "source_task_ids": [], "source_archive_paths": [], "origin": None, "sources": {}, "insights": {},
             "requested_window_days": window_days, "window_available": False,
             "available_window_days": available_days, "window_reason": reason, "limitations": [reason],
+            "calculation_basis": "current_local_event_store", "calculated_at": None,
+            "event_source_task_ids": [], "observed_counts": {},
         }
+
+    # Research uses the saved result and its original observation window.
+    if window_days is None:
+        return json.loads(run.result_json)
 
     end = run.window_end
     start = run.window_start if window_days is None else end - timedelta(days=window_days)
@@ -208,6 +215,10 @@ def repository_insights(session, repository_id, window_days=90):
         "available_window_days": available_days,
         "window_reason": None,
         "limitations": limitations if isinstance(limitations, list) else list(LIMITATIONS),
+        "calculation_basis": "current_local_event_store",
+        "calculated_at": iso_z(utc_now()),
+        "event_source_task_ids": sorted({item["source_task_id"] for rows in events.values() for item in rows if item["source_task_id"]}),
+        "observed_counts": _observed_event_counts(events, start, end),
     })
     return result
 

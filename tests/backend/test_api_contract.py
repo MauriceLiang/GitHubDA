@@ -245,3 +245,17 @@ def test_analysis_window_contract_and_invalid_comparison_ranges(backend_client):
         assert response.status_code == 422
         exported = client.get(f"/api/v1/exports/comparison.csv?repository_ids=321,322&mode=same_period&window_days={days}", headers=HEADERS)
         assert exported.status_code == 422
+
+
+def test_insight_provenance_openapi_matches_documented_contract(backend_client):
+    import json
+    from pathlib import Path
+
+    client, _factory, _github = backend_client
+    schema = client.get('/openapi.json').json()['components']['schemas']['RepositoryInsights']
+    properties = schema['properties']
+    assert properties['calculation_basis']['const'] == 'current_local_event_store'
+    assert {'run_id', 'analyzed_at', 'source_task_ids', 'source_archive_paths', 'calculated_at', 'event_source_task_ids', 'observed_counts'} <= properties.keys()
+    assert 'calculated_at' in properties['analyzed_at']['description']
+    snapshot = json.loads((Path(__file__).resolve().parents[2] / 'docs/insights/window-schema.json').read_text())
+    assert snapshot['components']['schemas']['RepositoryInsights'] == schema

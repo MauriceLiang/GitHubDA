@@ -548,3 +548,77 @@ def test_commit_activity_archive_search_pagination_week_and_author_privacy(backe
     selected_week = client.get('/api/v1/repositories/123/commits?week_start=2026-08-17', headers=HEADERS).json()['data']
     assert selected_week['commit_count'] == 2
     assert {item['sha'] for item in selected_week['items']} == {f'{1001:040x}', f'{1002:040x}'}
+
+
+def test_recalculation_tracks_current_event_sources_without_rewriting_coverage_proof(backend_client, monkeypatch):
+    from backend.app.core.clock import utc_now
+    from backend.app.persistence.models import Dataset, DatasetRepository
+    from backend.app.services.insight_comparison import metric_value
+
+    client, factory, _ = backend_client
+    client.post('/api/v1/library/repositories', json={'full_name': 'example/project', 'auto_analyze': False}, headers=HEADERS)
+    raw = fixture()
+    sources = {module: {'coverage': 'budget_exhausted' if module == 'commits' else 'complete'} for module in raw}
+    with factory() as session:
+        proof = persist_insights(session, 123, 'coverage-task', raw, sources, END - timedelta(days=180), END, ['coverage-task/activity.json.gz'])
+        session.add(Dataset(dataset_id='saved-research', name='saved research', type='research'))
+        session.flush()
+        session.add(DatasetRepository(dataset_id='saved-research', repository_id=123))
+        session.commit()
+    later = {module: [] for module in raw}
+    later['commits'] = [
+        {'sha': raw['commits'][0]['sha'], 'commit': {'committer': {'date': iso_z(END - timedelta(days=1))}}},
+        {'sha': 'f' * 40, 'commit': {'committer': {'date': iso_z(END - timedelta(days=2))}}},
+        {'sha': 'e' * 40, 'commit': {'committer': {'date': iso_z(END - timedelta(days=200))}}},
+    ]
+    later['releases'] = [{'id': 9000, 'published_at': iso_z(END - timedelta(days=200)), 'draft': False, 'prerelease': False}]
+    with factory() as session:
+        persist_insights(session, 123, 'later-task', later, {module: {'coverage': 'complete'} for module in raw}, END - timedelta(days=14), END, ['later-task/activity.json.gz'])
+        session.commit()
+    calculated_at = utc_now() + timedelta(hours=1)
+    monkeypatch.setattr('backend.app.services.insights.utc_now', lambda: calculated_at)
+
+    result = client.get('/api/v1/repositories/123/insights?window_days=30', headers=HEADERS).json()['data']
+    assert result['run_id'] == proof['run_id']
+    assert result['analyzed_at'] == proof['analyzed_at']
+    assert result['source_task_ids'] == ['coverage-task']
+    assert result['source_archive_paths'] == ['coverage-task/activity.json.gz']
+    assert result['calculation_basis'] == 'current_local_event_store'
+    assert result['calculated_at'] == iso_z(calculated_at)
+    assert result['event_source_task_ids'] == ['coverage-task', 'later-task']
+    assert result['observed_counts']['commits_count'] == 61
+    assert result['observed_counts']['issues_closed_count'] == 0
+    assert result['observed_counts']['releases_count'] == 4
+    assert result['insights']['commit_activity']['quality']['coverage'] == 'budget_exhausted'
+    assert result['insights']['commit_activity']['quality']['status'] == 'partial'
+    assert result['insights']['issue_resolution']['quality']['coverage'] == 'complete'
+    assert result['insights']['issue_resolution']['quality']['valid_samples'] == 0
+    with factory() as session:
+        assert session.scalar(select(func.count()).select_from(RepositoryInsightRun)) == 2
+        saved = session.get(RepositoryInsightRun, proof['run_id'])
+        assert json.loads(saved.result_json)['observed_counts']['commits_count'] == 89
+    # Research stays on its latest saved run, independent of dynamic window reads.
+    research_before = client.get('/api/v1/research/insights?dataset_id=saved-research', headers=HEADERS).json()['data']
+    with factory() as session:
+        event = session.scalar(select(RepositoryActivityEvent).where(RepositoryActivityEvent.source_item_id == 'f' * 40))
+        event.event_at = END - timedelta(days=100)
+        session.commit()
+    client.get('/api/v1/repositories/123/insights?window_days=90', headers=HEADERS)
+    research_after = client.get('/api/v1/research/insights?dataset_id=saved-research', headers=HEADERS).json()['data']
+    assert research_after == research_before
+    with factory() as session:
+        latest = session.scalar(select(RepositoryInsightRun).order_by(RepositoryInsightRun.analyzed_at.desc()))
+        assert research_after['rows'][0]['values']['commits_weekly_mean'] == metric_value(json.loads(latest.result_json), 'commits_weekly_mean')
+
+
+def test_uncovered_window_does_not_claim_event_store_calculation(backend_client):
+    client, factory, _ = backend_client
+    client.post('/api/v1/library/repositories', json={'full_name': 'example/project', 'auto_analyze': False}, headers=HEADERS)
+    with factory() as session:
+        persist_insights(session, 123, 'short-run', fixture(), {module: {'coverage': 'complete'} for module in fixture()}, START, END, [])
+        session.commit()
+    result = client.get('/api/v1/repositories/123/insights?window_days=180', headers=HEADERS).json()['data']
+    assert result['window_available'] is False
+    assert result['run_id'] is result['analyzed_at'] is result['calculated_at'] is None
+    assert result['event_source_task_ids'] == []
+    assert result['observed_counts'] == {}

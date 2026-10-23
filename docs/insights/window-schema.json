@@ -1,0 +1,275 @@
+{
+  "components": {
+    "schemas": {
+      "RepositoryInsights": {
+        "properties": {
+          "repository_id": {
+            "type": "integer",
+            "title": "Repository Id"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id",
+            "description": "所选覆盖证明运行的 ID；不是本次 GET 新建的计算快照。"
+          },
+          "metric_version": {
+            "type": "string",
+            "title": "Metric Version"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "partial",
+              "missing",
+              "insufficient_samples",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "window_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Start"
+          },
+          "window_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window End"
+          },
+          "timezone": {
+            "type": "string",
+            "const": "UTC",
+            "title": "Timezone"
+          },
+          "analyzed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analyzed At",
+            "description": "所选覆盖证明运行的分析时间；本次重算时间见 calculated_at。"
+          },
+          "source_task_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Source Task Ids",
+            "description": "覆盖证明运行关联的来源任务。"
+          },
+          "source_archive_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Source Archive Paths",
+            "description": "覆盖证明运行关联的归档，并非当前事件的完整归档清单。"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin"
+          },
+          "sources": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Sources"
+          },
+          "insights": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/CommitActivity"
+                },
+                {
+                  "$ref": "#/components/schemas/DurationMetric"
+                },
+                {
+                  "$ref": "#/components/schemas/ReleaseMetric"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Insights"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Limitations"
+          },
+          "requested_window_days": {
+            "type": "integer",
+            "enum": [
+              30,
+              90,
+              180
+            ],
+            "title": "Requested Window Days",
+            "default": 90
+          },
+          "window_available": {
+            "type": "boolean",
+            "title": "Window Available",
+            "default": true
+          },
+          "available_window_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available Window Days"
+          },
+          "window_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Reason"
+          },
+          "calculation_basis": {
+            "type": "string",
+            "const": "current_local_event_store",
+            "title": "Calculation Basis",
+            "default": "current_local_event_store"
+          },
+          "calculated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calculated At",
+            "description": "本次从当前本地事件库重算的时间；范围不可用时为空。"
+          },
+          "event_source_task_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Event Source Task Ids",
+            "description": "本次读取的去重事件记录的来源任务；不表示不可变历史快照。"
+          },
+          "observed_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Observed Counts",
+            "description": "本次所选窗口的事件计数，Release 仍采用结束时间前 365 天。"
+          }
+        },
+        "type": "object",
+        "required": [
+          "repository_id",
+          "run_id",
+          "metric_version",
+          "status",
+          "window_start",
+          "window_end",
+          "timezone",
+          "analyzed_at",
+          "source_task_ids",
+          "source_archive_paths",
+          "origin",
+          "sources",
+          "insights",
+          "limitations"
+        ],
+        "title": "RepositoryInsights"
+      },
+      "InsightsComparisonRequest": {
+        "properties": {
+          "repository_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "maxItems": 5,
+            "minItems": 2,
+            "title": "Repository Ids"
+          },
+          "depth": {
+            "type": "string",
+            "enum": [
+              "basic",
+              "deep"
+            ],
+            "title": "Depth",
+            "default": "basic"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "same_period",
+              "individual_periods"
+            ],
+            "title": "Mode",
+            "default": "same_period"
+          },
+          "window_days": {
+            "type": "integer",
+            "enum": [
+              30,
+              90,
+              180
+            ],
+            "title": "Window Days",
+            "default": 90
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "repository_ids"
+        ],
+        "title": "InsightsComparisonRequest"
+      }
+    }
+  }
+}

@@ -474,6 +474,15 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
       coverage,
       collectedAt,
       observations,
+      provenance: {
+        calculationBasis: String(result.calculation_basis ?? ''),
+        calculatedAt: textOrNull(result.calculated_at),
+        coverageRunId: textOrNull(result.run_id),
+        coverageAnalyzedAt: textOrNull(result.analyzed_at),
+        coverageSourceTaskIds: Array.isArray(result.source_task_ids) ? result.source_task_ids.map(String) : [],
+        coverageArchivePaths: Array.isArray(result.source_archive_paths) ? result.source_archive_paths.map(String) : [],
+        eventSourceTaskIds: Array.isArray(result.event_source_task_ids) ? result.event_source_task_ids.map(String) : [],
+      },
       windowAvailability: {
         requestedDays: window,
         available: windowAvailable,
