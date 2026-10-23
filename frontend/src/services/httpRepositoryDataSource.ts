@@ -701,7 +701,7 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
         label: String(row.full_name ?? ''),
         color: colors[index % colors.length],
         points,
-        coverage: qualityStatus === 'ready' ? { state: 'complete', label: '完整覆盖' } : qualityStatus === 'missing' ? { state: 'missing', label: '未采集' } : { state: 'partial', label: qualityStatus === 'insufficient_samples' ? '样本不足' : '部分覆盖' },
+        coverage: row.window_available !== true ? { state: 'missing', label: '范围未覆盖', detail: textOrNull(row.window_reason) ?? undefined } : qualityStatus === 'ready' ? { state: 'complete', label: '完整覆盖' } : qualityStatus === 'missing' ? { state: 'missing', label: '未采集' } : { state: 'partial', label: qualityStatus === 'insufficient_samples' ? '样本不足' : '部分覆盖' },
         collectedAt: shortDate(row.analyzed_at) ?? '—',
         windowStart: shortDate(row.window_start),
         windowEnd: shortDate(row.window_end),

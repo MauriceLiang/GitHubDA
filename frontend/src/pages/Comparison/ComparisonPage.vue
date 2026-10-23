@@ -42,6 +42,7 @@ const { data, loading, error } = useAsyncData(
 
 const canCompare = computed(() => analysis.compareIds.length >= 2)
 const entries = computed(() => data.value?.entries ?? [])
+const comparisonNotes = computed(() => (data.value?.notes ?? []).filter((note) => !entries.value.some((entry) => entry.windowReason && note === `${entry.label}：${entry.windowReason}`)))
 const short = (label: string) => label.split('/')[1]
 const issueItems = computed(() => entries.value.filter((e) => e.issueP50 !== null).map((e) => ({ label: short(e.label), value: e.issueP50 as number, color: e.color })))
 const prItems = computed(() => entries.value.filter((e) => e.prP50 !== null).map((e) => ({ label: short(e.label), value: e.prP50 as number, color: e.color })))
@@ -51,8 +52,8 @@ const missingReason = (quality: string) => ({
   missing: '未采集',
   failed: '采集失败',
 }[quality] ?? (comparisonMode.value === 'same_period' ? '观察窗口不一致' : '当前口径不可比'))
-const issueMissing = computed(() => entries.value.filter((e) => e.issueP50 === null).map((e) => `${short(e.label)}：${missingReason(e.issueQuality)}`))
-const prMissing = computed(() => entries.value.filter((e) => e.prP50 === null).map((e) => `${short(e.label)}：${missingReason(e.prQuality)}`))
+const issueMissing = computed(() => entries.value.filter((e) => e.issueP50 === null).map((e) => `${short(e.label)}：${e.windowAvailable ? missingReason(e.issueQuality) : '范围未覆盖'}`))
+const prMissing = computed(() => entries.value.filter((e) => e.prP50 === null).map((e) => `${short(e.label)}：${e.windowAvailable ? missingReason(e.prQuality) : '范围未覆盖'}`))
 const totalCommits = (entry: (typeof entries.value)[number]) => entry.points.length && entry.points.every((point) => point.value !== null)
   ? entry.points.reduce((sum, point) => sum + (point.value ?? 0), 0).toLocaleString('en-US')
   : '—'
@@ -81,8 +82,8 @@ async function exportComparison() {
       </div>
       <div v-if="canCompare" class="flex flex-wrap items-center gap-2">
         <GdSegmented :model-value="analysis.timeWindow" :options="windowOptions" aria-label="比较时间范围" data-testid="comparison-window" @update:model-value="setWindow" />
-        <GdSegmented :model-value="comparisonMode" :options="comparisonModeOptions" size="md" aria-label="选择对比方式" @update:model-value="setComparisonMode" />
-        <GdButton variant="outline" :disabled="exporting" @click="exportComparison"><Download :size="14" /> {{ exporting ? '正在导出…' : '导出报告数据' }}</GdButton>
+        <GdSegmented :model-value="comparisonMode" :options="comparisonModeOptions" size="md" aria-label="选择对比方式" data-testid="comparison-mode" @update:model-value="setComparisonMode" />
+        <GdButton variant="outline" :disabled="exporting || loading" data-testid="export-comparison" @click="exportComparison"><Download :size="14" /> {{ exporting ? '正在导出…' : '导出报告数据' }}</GdButton>
       </div>
     </div>
 
@@ -94,7 +95,7 @@ async function exportComparison() {
 
     <template v-else>
 
-    <p class="-mt-2 text-[11.5px] text-muted" data-testid="comparison-description" :data-window-days="data?.requestedWindowDays">{{ analysis.timeWindow }} 天 · {{ comparisonModeDescription }}</p>
+    <p class="-mt-2 text-[11.5px] text-muted" data-testid="comparison-description" :data-window-days="data?.requestedWindowDays" :data-mode="data?.mode" :aria-busy="loading">{{ analysis.timeWindow }} 天 · {{ comparisonModeDescription }}</p>
 
     <div v-for="entry in entries.filter((item) => !item.windowAvailable)" :key="entry.id" class="rounded-md bg-warnbg px-3 py-2 text-[12px] text-warnfg" data-testid="comparison-window-unavailable">
       {{ entry.label }}：{{ entry.windowReason ?? '所选范围未覆盖' }}
@@ -112,9 +113,9 @@ async function exportComparison() {
       </RouterLink>
     </div>
 
-    <div v-if="error || data?.notes.length" class="flex items-start gap-2 rounded-md bg-warnbg px-3 py-2.5 text-[11.5px] leading-relaxed text-warnfg">
+    <div v-if="error || comparisonNotes.length" class="flex items-start gap-2 rounded-md bg-warnbg px-3 py-2.5 text-[11.5px] leading-relaxed text-warnfg">
       <TriangleAlert :size="14" class="mt-0.5 shrink-0" />
-      <span>{{ error ?? data?.notes.join(' ') }}</span>
+      <span>{{ error ?? comparisonNotes.join(' ') }}</span>
     </div>
 
     <GdCard>
@@ -192,7 +193,7 @@ async function exportComparison() {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="entry in entries" :key="entry.id">
+          <tr v-for="entry in entries" :key="entry.id" data-testid="comparison-row" :data-repository-id="entry.id" :data-window-available="entry.windowAvailable">
             <td class="border-b border-line px-2.5 py-2.5">{{ entry.label }}</td>
             <td class="border-b border-line px-2.5 py-2.5 font-mono">{{ totalCommits(entry) }}</td>
             <td class="border-b border-line px-2.5 py-2.5 font-mono">{{ entry.issueP50 === null ? '—' : `${entry.issueP50} 天` }}</td>
