@@ -51,6 +51,6 @@ export interface RepositoryDataSource {
   listTasks(): Promise<TaskItem[]>
   retryTask(id: string): Promise<string>
   exportInsights(id: string, windowDays: TimeWindow): Promise<Blob>
-  exportComparison(ids: string[], mode: ComparisonMode): Promise<Blob>
+  exportComparison(ids: string[], windowDays: TimeWindow, mode: ComparisonMode): Promise<Blob>
   exportRepositories(scope: 'library' | 'research', datasetId?: string): Promise<Blob>
 }

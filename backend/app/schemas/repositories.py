@@ -144,3 +144,4 @@ class ComparisonRequest(DTO):
 
 class InsightsComparisonRequest(ComparisonRequest):
     mode: Literal["same_period", "individual_periods"] = "same_period"
+    window_days: Literal[30, 90, 180] = 90

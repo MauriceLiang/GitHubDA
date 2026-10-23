@@ -44,7 +44,7 @@ def compare(request: Request, body: ComparisonRequest, session: Session = Depend
 @router.post("/comparisons/insights")
 def compare_activity_insights(request: Request, body: InsightsComparisonRequest, session: Session = Depends(get_session)):
     from backend.app.services.insight_comparison import compare_insights
-    return envelope(request, compare_insights(session, body.repository_ids, body.mode))
+    return envelope(request, compare_insights(session, body.repository_ids, body.mode, body.window_days))
 
 
 @router.get("/research/insights")

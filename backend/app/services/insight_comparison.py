@@ -20,16 +20,18 @@ def metric_value(result, key):
     return metric.get('median_interval_days' if key == 'release_interval_days' else 'median_hours')
 
 
-def compare_insights(session, ids, mode='same_period'):
+def compare_insights(session, ids, mode='same_period', window_days=90):
     if not 2 <= len(ids) <= 5 or len(set(ids)) != len(ids):
         raise AppError(422, 'VALIDATION_ERROR', '请选择2–5个不同仓库')
     if mode not in {'same_period', 'individual_periods'}:
         raise AppError(422, 'VALIDATION_ERROR', '不支持的对比方式')
-    results = [repository_insights(session, id, window_days=None) for id in ids]
+    if window_days not in {30, 90, 180}:
+        raise AppError(422, 'VALIDATION_ERROR', '分析范围只支持 30、90 或 180 天')
+    results = [repository_insights(session, id, window_days=window_days) for id in ids]
     repos = [session.get(Repository, id) for id in ids]
     common_weeks = None
     for result in results:
-        weeks = {p['start'] for p in result['insights'].get('commit_activity', {}).get('weekly', []) if p['quality'] == 'ready'}
+        weeks = {p['start'] for p in result['insights'].get('commit_activity', {}).get('weekly', []) if p['complete_week'] and p['quality'] == 'ready' and p['value'] is not None}
         common_weeks = weeks if common_weeks is None else common_weeks & weeks
     warnings = ['项目类型未分类；活动规模与处理耗时不能直接判定项目优劣。']
     if len({r.language for r in repos}) > 1:
@@ -42,12 +44,14 @@ def compare_insights(session, ids, mode='same_period'):
         warnings.append('各仓库分别使用自身最近一次分析中的完整周与可用指标；观察窗口可能不同，适合查看各自活跃度和处理节奏，不代表同期对比。')
     rows = []
     for repo, result in zip(repos, results):
+        if not result['window_available']:
+            warnings.append(f"{repo.full_name}：{result['window_reason']}")
         values = {}
         metric = result['insights'].get('commit_activity')
         ready_weeks = [
             point
             for point in (metric or {}).get('weekly', [])
-            if point['quality'] == 'ready'
+            if point['complete_week'] and point['quality'] == 'ready' and point['value'] is not None
         ]
         selected_weeks = ready_weeks if mode == 'individual_periods' else [
             point for point in ready_weeks if point['start'] in (common_weeks or set())
@@ -64,8 +68,8 @@ def compare_insights(session, ids, mode='same_period'):
                 comparable = value is not None
                 start, end = (points[0]['start'], points[-1]['end']) if points else (None, None)
             values[key] = {'value': value if comparable else None, 'unit': unit, 'comparable': comparable, 'valid_samples': sum(p['value'] for p in points) if key == 'commits_weekly_mean' else metric['quality']['valid_samples'] if metric else 0, 'quality': metric['quality']['status'] if metric else 'missing', 'window_start': start, 'window_end': end}
-        rows.append({'repository_id': repo.repository_id, 'full_name': repo.full_name, 'language': repo.language, 'created_at': iso_z(repo.created_at), 'analyzed_at': result['analyzed_at'], 'run_id': result['run_id'], 'window_start': result['window_start'], 'window_end': result['window_end'], 'metrics': values, 'weekly_commits': weekly_commits})
-    return {'metric_version': 'insights-v1', 'timezone': 'UTC', 'mode': mode, 'common_complete_weeks': len(common_weeks or []), 'repositories': rows, 'warnings': warnings}
+        rows.append({'repository_id': repo.repository_id, 'full_name': repo.full_name, 'language': repo.language, 'created_at': iso_z(repo.created_at), 'analyzed_at': result['analyzed_at'], 'run_id': result['run_id'], 'window_start': result['window_start'], 'window_end': result['window_end'], 'window_available': result['window_available'], 'window_reason': result['window_reason'], 'metrics': values, 'weekly_commits': weekly_commits})
+    return {'metric_version': 'insights-v1', 'timezone': 'UTC', 'mode': mode, 'requested_window_days': window_days, 'common_complete_weeks': len(common_weeks or []), 'repositories': rows, 'warnings': warnings}
 
 
 def research_insights(session, dataset_id):
