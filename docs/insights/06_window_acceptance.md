@@ -51,4 +51,4 @@ API 字段说明见 [采集与回放合同](02_collection_contract.md)。[window
 - 浏览器：使用独立 Mock Vite 服务 `http://127.0.0.1:5179` 和独立 headless Chromium 运行 `npm run test:e2e:analysis-window`，浅色与深色场景均通过。实际下载并断言了每个主题下的 30 天、180 天 CSV；任务范围、无自动建任务、缺失范围、比较模式、桌面和 390px 布局也通过。浏览器断言报告和 CSV、截图保存在 `/tmp/repovantage-window-final/`。
 - 错误配置：将 `CHROME_PATH` 指向不存在文件时，脚本以非零状态退出并明确报告路径不可用。
 - `git diff --check` 通过。
-- 真实 GitHub API 与限流恢复：未执行。远端 GitHub Actions：本地无法预先验证，推送 PR 后需查看工作流结果；本地检查通过不代表远端 CI 已执行。
+- 真实 GitHub API 与限流恢复：未执行。远端 GitHub Actions run `39876166391`（提交 `668252e`）已完成，`backend` 与 `browser` 两个 job 均为 success；本地检查结果不替代后续提交对应的远端 CI。
