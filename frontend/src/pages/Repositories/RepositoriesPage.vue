@@ -312,7 +312,7 @@ async function exportFeatured() {
         </div>
         <div v-else class="divide-y divide-line">
           <div v-for="repo in (tab === 'library' ? filtered : searchResults)" :key="repo.id" class="grid grid-cols-[24px_1fr] items-center gap-3 py-3 lg:grid-cols-[24px_1.7fr_1fr_104px_96px_76px_132px]">
-            <input v-if="tab === 'library'" type="checkbox" class="size-3.5 accent-ink" :disabled="clearingSelected || busyId === repo.id" :checked="selected.includes(repo.id)" @change="toggle(repo)" />
+            <input v-if="tab === 'library'" type="checkbox" :aria-label="`选择仓库 ${repo.fullName}`" data-testid="repository-select" :data-repository-id="repo.id" class="size-3.5 accent-ink" :disabled="clearingSelected || busyId === repo.id" :checked="selected.includes(repo.id)" @change="toggle(repo)" />
             <span v-else />
             <div class="min-w-0">
               <div class="truncate text-[13px] font-semibold">{{ repo.fullName }}</div>
@@ -349,7 +349,7 @@ async function exportFeatured() {
       <div class="flex gap-2">
         <GdButton variant="ghost" size="sm" :disabled="clearingSelected" @click="selected = []">清除选择</GdButton>
         <GdButton variant="danger" size="sm" :loading="clearingSelected" :disabled="busyId !== null" @click="deleteSelectedRepositories"><Trash2 :size="12" />删除所选仓库及数据</GdButton>
-        <GdButton size="sm" :disabled="selected.length < 2 || selected.length > 5 || clearingSelected" @click="compare">进入比较 <ArrowRight :size="12" /></GdButton>
+        <GdButton data-testid="compare-selected" size="sm" :disabled="selected.length < 2 || selected.length > 5 || clearingSelected" @click="compare">进入比较 <ArrowRight :size="12" /></GdButton>
       </div>
     </div>
   </div>

@@ -147,7 +147,7 @@ function taskDetail(task: TaskItem): string {
         </div>
         <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
           <div class="divide-y divide-line">
-            <div v-for="task in tasks" :key="task.id" class="grid grid-cols-1 items-center gap-3 py-3 lg:grid-cols-[minmax(190px,1.6fr)_96px_92px_minmax(280px,1.8fr)_64px_92px] lg:gap-4">
+            <div v-for="task in tasks" :key="task.id" data-testid="task-row" :data-task-id="task.id" :data-scope-kind="task.scopeKind" :data-window-days="task.windowDays" class="grid grid-cols-1 items-center gap-3 py-3 lg:grid-cols-[minmax(190px,1.6fr)_96px_92px_minmax(280px,1.8fr)_64px_92px] lg:gap-4">
               <div class="min-w-0">
                 <div class="truncate text-[13px] font-semibold">{{ task.repository }}</div>
                 <div class="text-[11.5px] text-muted">

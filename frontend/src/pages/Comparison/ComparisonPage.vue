@@ -10,7 +10,7 @@ import GdCoverageNote from '@/components/ui/GdCoverageNote.vue'
 import { useAsyncData } from '@/composables/useAsyncData'
 import { useDataSource } from '@/composables/useDataSource'
 import { downloadBlob } from '@/lib/download'
-import type { ComparisonMode, TimeWindow } from '@/services/types'
+import type { ComparisonBundle, ComparisonMode, TimeWindow } from '@/services/types'
 import { useAnalysisStore } from '@/stores/analysis'
 import { useUiStore } from '@/stores/ui'
 import GdSegmented from '@/components/ui/GdSegmented.vue'
@@ -23,11 +23,11 @@ const comparisonMode = ref<ComparisonMode>('same_period')
 const windowOptions = [30, 90, 180].map((value) => ({ value, label: `${value} 天` }))
 const setWindow = (value: string | number) => analysis.setWindow(value as TimeWindow)
 const comparisonModeOptions = [
-  { value: 'same_period', label: '同期对比', hint: '只比较共同完整周；耗时和发布间隔要求分析窗口一致。' },
+  { value: 'same_period', label: '同期对比', hint: '按真实观察窗口交集重算；交集至少达到所选范围的 80%，Commit 仅取共同完整 UTC 周。' },
   { value: 'individual_periods', label: '各自窗口', hint: '分别使用各仓库自身完整周和可用指标，时间范围可能不同。' },
 ]
 const comparisonModeDescription = computed(() => comparisonMode.value === 'same_period'
-  ? '只取所有仓库共同完整的自然周；Issue、PR 和发布间隔还要求观察窗口一致。'
+  ? '按所有仓库真实观察窗口的交集重算；至少覆盖所选窗口的 80%。Commit 只比较共同完整 UTC 周，Release 使用近 365 天并单独检查覆盖。'
   : '分别展示各仓库自身完整自然周与可用指标；窗口不同时适合比较各自活跃度和处理节奏，不代表同期排名。')
 function setComparisonMode(value: string | number) {
   if (value === 'same_period' || value === 'individual_periods') comparisonMode.value = value
@@ -36,12 +36,14 @@ function setComparisonMode(value: string | number) {
 const { data, loading, error } = useAsyncData(
   () => analysis.compareIds.length >= 2
     ? source.getComparison(analysis.compareIds, analysis.timeWindow, comparisonMode.value)
-    : Promise.resolve({ window: { start: '—', end: '—' }, requestedWindowDays: analysis.timeWindow, mode: comparisonMode.value, entries: [], notes: [] }),
+    : Promise.resolve({ window: { start: '—', end: '—' }, requestedWindowDays: analysis.timeWindow, mode: comparisonMode.value, comparisonBasis: { scope: comparisonMode.value === 'same_period' ? 'shared_observation' : 'repository_windows', requestedWindowDays: analysis.timeWindow, sharedWindow: null, effectiveDays: null, minimumCoverageRatio: comparisonMode.value === 'same_period' ? 0.8 : null, minimumEffectiveDays: comparisonMode.value === 'same_period' ? analysis.timeWindow * 0.8 : null, status: comparisonMode.value === 'same_period' ? 'not_comparable' : 'separate_windows', reasonCode: null, reason: null }, entries: [], notes: [] } as ComparisonBundle),
   () => [analysis.compareIds.join(','), comparisonMode.value, analysis.timeWindow],
 )
 
 const canCompare = computed(() => analysis.compareIds.length >= 2)
 const entries = computed(() => data.value?.entries ?? [])
+const comparisonBasis = computed(() => data.value?.comparisonBasis)
+const comparisonNotes = computed(() => (data.value?.notes ?? []).filter((note) => !entries.value.some((entry) => entry.windowReason && note === `${entry.label}：${entry.windowReason}`)))
 const short = (label: string) => label.split('/')[1]
 const issueItems = computed(() => entries.value.filter((e) => e.issueP50 !== null).map((e) => ({ label: short(e.label), value: e.issueP50 as number, color: e.color })))
 const prItems = computed(() => entries.value.filter((e) => e.prP50 !== null).map((e) => ({ label: short(e.label), value: e.prP50 as number, color: e.color })))
@@ -51,8 +53,14 @@ const missingReason = (quality: string) => ({
   missing: '未采集',
   failed: '采集失败',
 }[quality] ?? (comparisonMode.value === 'same_period' ? '观察窗口不一致' : '当前口径不可比'))
-const issueMissing = computed(() => entries.value.filter((e) => e.issueP50 === null).map((e) => `${short(e.label)}：${missingReason(e.issueQuality)}`))
-const prMissing = computed(() => entries.value.filter((e) => e.prP50 === null).map((e) => `${short(e.label)}：${missingReason(e.prQuality)}`))
+const issueMissing = computed(() => entries.value.filter((e) => e.issueP50 === null).map((e) => `${short(e.label)}：${e.windowAvailable ? missingReason(e.issueQuality) : '范围未覆盖'}`))
+const prMissing = computed(() => entries.value.filter((e) => e.prP50 === null).map((e) => `${short(e.label)}：${e.windowAvailable ? missingReason(e.prQuality) : '范围未覆盖'}`))
+const basisWindowLabel = computed(() => comparisonBasis.value?.sharedWindow
+  ? `${comparisonBasis.value.sharedWindow.start.replace('T', ' ').replace('Z', ' UTC')} — ${comparisonBasis.value.sharedWindow.end.replace('T', ' ').replace('Z', ' UTC')}`
+  : '无共同窗口')
+const comparisonEmptyMessage = computed(() => comparisonBasis.value?.status === 'not_comparable'
+  ? comparisonBasis.value.reason ?? '没有达到同期比较要求。'
+  : '共同窗口内没有可用的完整 UTC Commit 周。可切换到「各自窗口」查看各仓库自身活动。')
 const totalCommits = (entry: (typeof entries.value)[number]) => entry.points.length && entry.points.every((point) => point.value !== null)
   ? entry.points.reduce((sum, point) => sum + (point.value ?? 0), 0).toLocaleString('en-US')
   : '—'
@@ -81,8 +89,8 @@ async function exportComparison() {
       </div>
       <div v-if="canCompare" class="flex flex-wrap items-center gap-2">
         <GdSegmented :model-value="analysis.timeWindow" :options="windowOptions" aria-label="比较时间范围" data-testid="comparison-window" @update:model-value="setWindow" />
-        <GdSegmented :model-value="comparisonMode" :options="comparisonModeOptions" size="md" aria-label="选择对比方式" @update:model-value="setComparisonMode" />
-        <GdButton variant="outline" :disabled="exporting" @click="exportComparison"><Download :size="14" /> {{ exporting ? '正在导出…' : '导出报告数据' }}</GdButton>
+        <GdSegmented :model-value="comparisonMode" :options="comparisonModeOptions" size="md" aria-label="选择对比方式" data-testid="comparison-mode" @update:model-value="setComparisonMode" />
+        <GdButton variant="outline" :disabled="exporting || loading" data-testid="export-comparison" @click="exportComparison"><Download :size="14" /> {{ exporting ? '正在导出…' : '导出报告数据' }}</GdButton>
       </div>
     </div>
 
@@ -94,7 +102,16 @@ async function exportComparison() {
 
     <template v-else>
 
-    <p class="-mt-2 text-[11.5px] text-muted" data-testid="comparison-description" :data-window-days="data?.requestedWindowDays">{{ analysis.timeWindow }} 天 · {{ comparisonModeDescription }}</p>
+    <p class="-mt-2 text-[11.5px] text-muted" data-testid="comparison-description" :data-window-days="data?.requestedWindowDays" :data-mode="data?.mode" :aria-busy="loading">{{ analysis.timeWindow }} 天 · {{ comparisonModeDescription }}</p>
+
+    <div v-if="comparisonMode === 'same_period' && comparisonBasis" class="rounded-md border border-line bg-panel px-3 py-2 text-[11.5px] leading-relaxed" data-testid="comparison-basis" :data-status="comparisonBasis.status" :data-reason-code="comparisonBasis.reasonCode ?? ''">
+      <span class="font-medium">同期比较依据：</span>
+      <template v-if="comparisonBasis.sharedWindow">
+        {{ basisWindowLabel }} · 交集 {{ comparisonBasis.effectiveDays }} 天 / 最低 {{ comparisonBasis.minimumEffectiveDays }} 天。
+      </template>
+      <template v-else>未形成共同分析窗口。</template>
+      <span v-if="comparisonBasis.reason" class="ml-1 text-warnfg">{{ comparisonBasis.reason }}</span>
+    </div>
 
     <div v-for="entry in entries.filter((item) => !item.windowAvailable)" :key="entry.id" class="rounded-md bg-warnbg px-3 py-2 text-[12px] text-warnfg" data-testid="comparison-window-unavailable">
       {{ entry.label }}：{{ entry.windowReason ?? '所选范围未覆盖' }}
@@ -112,9 +129,9 @@ async function exportComparison() {
       </RouterLink>
     </div>
 
-    <div v-if="error || data?.notes.length" class="flex items-start gap-2 rounded-md bg-warnbg px-3 py-2.5 text-[11.5px] leading-relaxed text-warnfg">
+    <div v-if="error || comparisonNotes.length" class="flex items-start gap-2 rounded-md bg-warnbg px-3 py-2.5 text-[11.5px] leading-relaxed text-warnfg">
       <TriangleAlert :size="14" class="mt-0.5 shrink-0" />
-      <span>{{ error ?? data?.notes.join(' ') }}</span>
+      <span>{{ error ?? comparisonNotes.join(' ') }}</span>
     </div>
 
     <GdCard>
@@ -133,7 +150,7 @@ async function exportComparison() {
       <div v-if="loading" class="h-[280px] animate-pulse rounded bg-track/60" />
       <p v-if="error" class="py-8 text-center text-[12px] text-danger">比较数据加载失败：{{ error }}</p>
       <ComparisonChart v-else-if="entries.some((entry) => entry.points.length)" :entries="entries.map((e) => ({ label: e.label.split('/')[1], color: e.color, points: e.points }))" :height="280" />
-      <p v-else-if="!loading" class="py-8 text-center text-[12px] text-muted">{{ comparisonMode === 'same_period' ? '所选仓库没有共同的完整 Commit 周，无法绘制同期曲线；可切换到「各自窗口」查看各仓库自身的活动。' : '各仓库自身窗口内都没有可用的完整 Commit 周。' }}</p>
+      <p v-else-if="!loading" class="py-8 text-center text-[12px] text-muted">{{ comparisonMode === 'same_period' ? comparisonEmptyMessage : '各仓库自身窗口内都没有可用的完整 Commit 周。' }}</p>
       <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted">
         <span>单位：次 · SHA 去重 · 各仓库均为默认分支</span>
         <span>曲线在某周中断表示该仓库的采集到此结束，不用 0 补齐</span>
@@ -192,7 +209,7 @@ async function exportComparison() {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="entry in entries" :key="entry.id">
+          <tr v-for="entry in entries" :key="entry.id" data-testid="comparison-row" :data-repository-id="entry.id" :data-window-available="entry.windowAvailable">
             <td class="border-b border-line px-2.5 py-2.5">{{ entry.label }}</td>
             <td class="border-b border-line px-2.5 py-2.5 font-mono">{{ totalCommits(entry) }}</td>
             <td class="border-b border-line px-2.5 py-2.5 font-mono">{{ entry.issueP50 === null ? '—' : `${entry.issueP50} 天` }}</td>

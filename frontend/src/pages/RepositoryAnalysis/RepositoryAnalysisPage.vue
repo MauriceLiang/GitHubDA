@@ -80,7 +80,7 @@ function openWeek(payload: { date: string; count: number }) {
 
 <template>
   <ModuleTabs v-if="data && !notAnalyzed && !failed" :repo-id="repoId" :active="tab" />
-  <div class="flex flex-col gap-[18px] px-7 pb-8 pt-[22px]">
+  <div class="flex flex-col gap-[18px] px-7 pb-8 pt-[22px]" data-testid="repository-analysis" :data-window-days="data?.windowAvailability.requestedDays" :data-window-available="data?.windowAvailability.available">
     <RepoHeader
       v-if="data"
       :repository="data.repository"
@@ -118,7 +118,7 @@ function openWeek(payload: { date: string; count: number }) {
       </GdEmptyState>
     </GdCard>
 
-    <GdCard v-else-if="data && !data.windowAvailability.available" padding="sm" :gap="false">
+    <GdCard v-else-if="data && !data.windowAvailability.available" padding="sm" :gap="false" data-testid="analysis-window-unavailable">
       <div class="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 class="m-0 text-[15px] font-semibold">尚未采集所选的 {{ data.windowAvailability.requestedDays }} 天范围</h2>
@@ -128,6 +128,8 @@ function openWeek(payload: { date: string; count: number }) {
       </div>
     </GdCard>
 
-    <component :is="tabComponent" v-else-if="data && data.windowAvailability.available" :analysis="data" @select-week="openWeek" />
+    <div v-else-if="data && data.windowAvailability.available" data-testid="analysis-content" class="contents">
+      <component :is="tabComponent" :analysis="data" @select-week="openWeek" />
+    </div>
   </div>
 </template>

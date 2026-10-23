@@ -12,7 +12,7 @@ from backend.app.persistence.models import AnalysisResult, Repository, Repositor
 HEADERS = {"X-Internal-Api-Key": "test-internal-key"}
 
 
-def seed_activity_comparison(factory, *, second_days=180, second_offset=0, partial=False):
+def seed_activity_comparison(factory, *, second_days=180, second_offset=0, second_offset_hours=0, partial=False, empty_issues=False):
     from backend.app.services.insights import persist_insights
 
     end = datetime(2026, 10, 19)
@@ -21,15 +21,22 @@ def seed_activity_comparison(factory, *, second_days=180, second_offset=0, parti
             session.add(Repository(repository_id=repository_id, full_name=f"fixture/{repository_id}", html_url=f"https://github.com/fixture/{repository_id}", language="Python"))
         session.flush()
         for repository_id in (321, 322):
-            stop = end - timedelta(days=second_offset if repository_id == 322 else 0)
+            stop = end - timedelta(days=second_offset if repository_id == 322 else 0, hours=second_offset_hours if repository_id == 322 else 0)
             raw = {
                 "commits": [{"sha": f"{days:040x}", "commit": {"committer": {"date": iso_z(stop - timedelta(days=days))}}} for days in (5, 15, 45, 80, 120, 170)],
-                "issues": [{"id": index + 1, "created_at": iso_z(stop - timedelta(days=days + index + 2)), "closed_at": iso_z(stop - timedelta(days=days + index))} for index, days in enumerate([2] * 10 + [45] * 10)],
+                "issues": [] if empty_issues else [{"id": index + 1, "created_at": iso_z(stop - timedelta(days=days + index + 2)), "closed_at": iso_z(stop - timedelta(days=days + index))} for index, days in enumerate([2] * 10 + [45] * 10)],
                 "pulls": [{"id": index + 1, "created_at": iso_z(stop - timedelta(days=days + index + 1)), "merged_at": iso_z(stop - timedelta(days=days + index))} for index, days in enumerate([2] * 10 + [45] * 10)],
                 "releases": [{"id": index + 1, "published_at": iso_z(stop - timedelta(days=days)), "draft": False, "prerelease": False} for index, days in enumerate((10, 50, 200))],
             }
-            sources = {module: {"coverage": "budget_exhausted" if partial and module == "commits" else "complete"} for module in raw}
-            persist_insights(session, repository_id, f"source-{repository_id}", raw, sources, stop - timedelta(days=second_days if repository_id == 322 else 180), stop, [])
+            start = stop - timedelta(days=second_days if repository_id == 322 else 180)
+            sources = {
+                module: {
+                    "coverage": "budget_exhausted" if partial and repository_id == 321 and module == "commits" else "complete",
+                    "requested_interval": [iso_z(stop - timedelta(days=365) if module == "releases" else start), iso_z(stop)],
+                }
+                for module in raw
+            }
+            persist_insights(session, repository_id, f"source-{repository_id}", raw, sources, start, stop, [])
         session.commit()
 
 
@@ -118,6 +125,78 @@ def test_comparison_distinguishes_modes_and_preserves_partial_quality(backend_cl
     assert partial["window_available"] is True
     assert partial["metrics"]["commits_weekly_mean"]["quality"] == "partial"
     assert partial["metrics"]["commits_weekly_mean"]["value"] is None
+
+
+def test_same_period_recalculates_on_two_hour_shared_overlap_and_exports_basis(backend_client):
+    client, factory, _ = backend_client
+    seed_activity_comparison(factory, second_days=90, second_offset_hours=2)
+    body = {"repository_ids": [321, 322], "mode": "same_period", "window_days": 90}
+    result = client.post("/api/v1/comparisons/insights", json=body, headers=HEADERS).json()["data"]
+
+    basis = result["comparison_basis"]
+    assert basis["scope"] == "shared_observation"
+    assert basis["status"] == "comparable"
+    assert basis["reason_code"] is None
+    assert basis["minimum_coverage_ratio"] == 0.8
+    assert basis["shared_window"]["start"] == "2026-07-21T00:00:00Z"
+    assert basis["shared_window"]["end"] == "2026-10-18T22:00:00Z"
+    assert 89.9 < basis["effective_days"] < 90
+    assert result["common_complete_weeks"] > 0
+    for row in result["repositories"]:
+        assert row["window_start"] == basis["shared_window"]["start"]
+        assert row["window_end"] == basis["shared_window"]["end"]
+        assert row["metrics"]["issue_median_hours"]["comparable"] is True
+        assert row["metrics"]["issue_median_hours"]["reason_code"] is None
+        assert row["metrics"]["issue_median_hours"]["window_start"] == basis["shared_window"]["start"]
+        assert row["metrics"]["issue_median_hours"]["window_end"] == basis["shared_window"]["end"]
+    assert result["repositories"][0]["metrics"]["release_interval_days"]["quality"] == "partial"
+    assert result["repositories"][0]["metrics"]["release_interval_days"]["value"] is None
+    assert result["repositories"][1]["metrics"]["release_interval_days"]["quality"] == "ready"
+    assert result["repositories"][1]["metrics"]["release_interval_days"]["window_start"] == "2025-10-18T22:00:00Z"
+
+    exported = client.get("/api/v1/exports/comparison.csv?repository_ids=321,322&mode=same_period&window_days=90", headers=HEADERS)
+    rows = list(csv.DictReader(io.StringIO(exported.text.lstrip("\ufeff"))))
+    assert rows[0]["共同窗口开始"] == basis["shared_window"]["start"]
+    assert rows[0]["共同窗口结束"] == basis["shared_window"]["end"]
+    assert rows[0]["共同窗口有效天数"] == str(basis["effective_days"])
+    assert rows[0]["比较原因码"] == ""
+
+
+@pytest.mark.parametrize(("offset", "expected_status", "expected_reason"), [
+    (10, "comparable", None),
+    (20, "not_comparable", "SHARED_WINDOW_BELOW_THRESHOLD"),
+    (100, "not_comparable", "NO_SHARED_WINDOW"),
+])
+def test_same_period_applies_eighty_percent_overlap_threshold(backend_client, offset, expected_status, expected_reason):
+    client, factory, _ = backend_client
+    seed_activity_comparison(factory, second_days=90, second_offset=offset)
+    result = client.post("/api/v1/comparisons/insights", json={
+        "repository_ids": [321, 322], "mode": "same_period", "window_days": 90,
+    }, headers=HEADERS).json()["data"]
+    assert result["comparison_basis"]["status"] == expected_status
+    assert result["comparison_basis"]["reason_code"] == expected_reason
+    if expected_status == "comparable":
+        assert result["comparison_basis"]["effective_days"] == 80
+        assert all(row["metrics"]["issue_median_hours"]["value"] is not None for row in result["repositories"])
+    else:
+        assert all(metric["value"] is None for row in result["repositories"] for metric in row["metrics"].values())
+        assert all(metric["reason_code"] == expected_reason for row in result["repositories"] for metric in row["metrics"].values())
+
+
+def test_same_period_keeps_module_quality_independent_and_marks_empty_samples(backend_client):
+    client, factory, _ = backend_client
+    seed_activity_comparison(factory, second_days=90, partial=True, empty_issues=True)
+    result = client.post("/api/v1/comparisons/insights", json={
+        "repository_ids": [321, 322], "mode": "same_period", "window_days": 90,
+    }, headers=HEADERS).json()["data"]
+    first = result["repositories"][0]["metrics"]
+    assert first["commits_weekly_mean"]["quality"] == "partial"
+    assert first["commits_weekly_mean"]["value"] is None
+    assert first["commits_weekly_mean"]["reason_code"] == "METRIC_QUALITY_NOT_READY"
+    assert first["pr_median_hours"]["comparable"] is True
+    assert first["issue_median_hours"]["quality"] == "insufficient_samples"
+    assert first["issue_median_hours"]["value"] is None
+    assert first["issue_median_hours"]["reason_code"] == "METRIC_QUALITY_NOT_READY"
 
 
 def test_comparison_returns_available_metrics_and_csv_export(backend_client):

@@ -10,7 +10,7 @@ from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 
 from backend.app.analytics.insights import LIMITATIONS, calculate_insights
-from backend.app.core.clock import iso_z, utc_now
+from backend.app.core.clock import iso_z, parse_github_datetime, utc_now
 from backend.app.core.exceptions import AppError
 from backend.app.persistence.models import Repository, RepositoryActivityEvent, RepositoryInsightRun
 from backend.app.pipeline.collection_archive import iter_module_pages, iter_module_records
@@ -117,6 +117,7 @@ def _stored_window_events(session: Session, repository_id: int, start, end) -> d
         events[module] = [{
             "event_type": item.event_type,
             "source_item_id": item.source_item_id,
+            "source_task_id": item.source_task_id,
             "event_at": item.event_at,
             "created_at": item.created_at,
             "closed_at": item.closed_at,
@@ -172,11 +173,17 @@ def repository_insights(session, repository_id, window_days=90):
         return {
             "repository_id": repository_id, "run_id": None, "metric_version": METRIC_VERSION,
             "status": "missing", "window_start": None, "window_end": None, "timezone": "UTC",
-            "analyzed_at": iso_z(runs[0].analyzed_at) if runs else None,
+            "analyzed_at": None,
             "source_task_ids": [], "source_archive_paths": [], "origin": None, "sources": {}, "insights": {},
             "requested_window_days": window_days, "window_available": False,
             "available_window_days": available_days, "window_reason": reason, "limitations": [reason],
+            "calculation_basis": "current_local_event_store", "calculated_at": None,
+            "event_source_task_ids": [], "observed_counts": {},
         }
+
+    # Research uses the saved result and its original observation window.
+    if window_days is None:
+        return json.loads(run.result_json)
 
     end = run.window_end
     start = run.window_start if window_days is None else end - timedelta(days=window_days)
@@ -208,6 +215,61 @@ def repository_insights(session, repository_id, window_days=90):
         "available_window_days": available_days,
         "window_reason": None,
         "limitations": limitations if isinstance(limitations, list) else list(LIMITATIONS),
+        "calculation_basis": "current_local_event_store",
+        "calculated_at": iso_z(utc_now()),
+        "event_source_task_ids": sorted({item["source_task_id"] for rows in events.values() for item in rows if item["source_task_id"]}),
+        "observed_counts": _observed_event_counts(events, start, end),
+    })
+    return result
+
+
+def repository_insights_for_window(session, repository_id, start, end, source_result):
+    """Recalculate stored events for an explicit, already-proven observation window."""
+    if session.get(Repository, repository_id) is None:
+        raise AppError(404, "RESOURCE_NOT_FOUND", "本地仓库不存在")
+    if start >= end:
+        raise AppError(422, "VALIDATION_ERROR", "分析窗口必须晚于开始时间")
+    try:
+        sources = json.loads(json.dumps(source_result["sources"]))
+        limitations = list(source_result.get("limitations", LIMITATIONS))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise AppError(503, "INSIGHT_RUN_UNAVAILABLE", "分析运行缺少模块覆盖信息，请重新采集仓库数据") from exc
+    if not isinstance(sources, dict) or any(module not in sources for module in MODULES):
+        raise AppError(503, "INSIGHT_RUN_UNAVAILABLE", "分析运行缺少模块覆盖信息，请重新采集仓库数据")
+
+    release_start = end - timedelta(days=365)
+    release_source = sources["releases"]
+    requested_interval = release_source.get("requested_interval")
+    release_coverage_proven = False
+    if isinstance(requested_interval, list) and len(requested_interval) == 2:
+        release_coverage_start = parse_github_datetime(requested_interval[0])
+        release_coverage_end = parse_github_datetime(requested_interval[1])
+        release_coverage_proven = (
+            release_coverage_start is not None
+            and release_coverage_end is not None
+            and release_coverage_start <= release_start
+            and release_coverage_end >= end
+        )
+    if release_source.get("coverage") == "complete" and not release_coverage_proven:
+        release_source["coverage"] = "partial"
+        release_source["error_code"] = "RELEASE_WINDOW_NOT_COVERED"
+
+    events = _stored_window_events(session, repository_id, start, end)
+    metrics = calculate_insights(events, sources, start, end)
+    states = [metric["quality"]["status"] for metric in metrics.values()]
+    status = "missing" if all(state == "missing" for state in states) else "partial" if any(state in {"partial", "missing", "failed"} for state in states) else "ready"
+    result = dict(source_result)
+    result.update({
+        "status": status,
+        "window_start": iso_z(start),
+        "window_end": iso_z(end),
+        "sources": sources,
+        "insights": metrics,
+        "calculation_basis": "current_local_event_store_shared_window",
+        "calculated_at": iso_z(utc_now()),
+        "event_source_task_ids": sorted({item["source_task_id"] for rows in events.values() for item in rows if item.get("source_task_id")}),
+        "observed_counts": _observed_event_counts(events, start, end),
+        "limitations": limitations,
     })
     return result
 

@@ -1,6 +1,6 @@
 import type {
   CollectionSettings, CommitActivityPage, ComparisonBundle, ComparisonMode, Granularity, ReleaseDetails, RepositoryAnalysis, RepositorySummary,
-  FeaturedDatasetImportResult, FeaturedDatasetStatus, IssueOnlineDetail, IssueRecordDetail, IssueRecordPage, PullRequestActivityDetail, PullRequestActivityPage, PullRequestOnlineDetail, ResearchDataset, TaskItem, TimeWindow,
+  FeaturedDatasetImportResult, FeaturedDatasetStatus, IssueOnlineDetail, IssueRecordDetail, IssueRecordPage, PullRequestActivityDetail, PullRequestActivityPage, PullRequestOnlineDetail, ResearchAnalysisMode, ResearchDataset, TaskItem, TimeWindow,
 } from './types'
 
 /**
@@ -46,11 +46,12 @@ export interface RepositoryDataSource {
   /** Compare 2–5 repositories using a shared period or each repository's own complete period. */
   getComparison(ids: string[], window: TimeWindow, mode: ComparisonMode): Promise<ComparisonBundle>
 
-  getResearchDataset(id?: string): Promise<ResearchDataset>
+  getResearchDataset(id?: string, mode?: ResearchAnalysisMode | 'auto'): Promise<ResearchDataset>
 
   listTasks(): Promise<TaskItem[]>
   retryTask(id: string): Promise<string>
   exportInsights(id: string, windowDays: TimeWindow): Promise<Blob>
   exportComparison(ids: string[], windowDays: TimeWindow, mode: ComparisonMode): Promise<Blob>
-  exportRepositories(scope: 'library' | 'research', datasetId?: string): Promise<Blob>
+  exportRepositories(scope: 'library' | 'research', datasetId?: string, mode?: ResearchAnalysisMode): Promise<Blob>
+  exportResearchStatistics(datasetId: string, mode: ResearchAnalysisMode): Promise<Blob>
 }

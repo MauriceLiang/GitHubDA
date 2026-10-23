@@ -278,6 +278,16 @@ export interface Observation {
 }
 
 export interface RepositoryAnalysis {
+  /** Coverage proof and current event-store calculation have separate provenance. */
+  provenance?: {
+    calculationBasis: string
+    calculatedAt: string | null
+    coverageRunId: string | null
+    coverageAnalyzedAt: string | null
+    coverageSourceTaskIds: string[]
+    coverageArchivePaths: string[]
+    eventSourceTaskIds: string[]
+  }
   repository: RepositorySummary
   metrics: MetricSet
   /** Weekly commit series (main chart). */
@@ -301,6 +311,19 @@ export interface RepositoryAnalysis {
 }
 
 export type ComparisonMode = 'same_period' | 'individual_periods'
+export type ResearchAnalysisMode = 'formal' | 'exploratory'
+
+export interface ComparisonBasis {
+  scope: 'shared_observation' | 'repository_windows'
+  requestedWindowDays: TimeWindow
+  sharedWindow: { start: string; end: string } | null
+  effectiveDays: number | null
+  minimumCoverageRatio: number | null
+  minimumEffectiveDays: number | null
+  status: 'comparable' | 'not_comparable' | 'separate_windows'
+  reasonCode: string | null
+  reason: string | null
+}
 
 export interface ComparisonEntry {
   id: string
@@ -316,9 +339,11 @@ export interface ComparisonEntry {
   issueP50: number | null
   issueSample: number
   issueQuality: string
+  issueReasonCode: string | null
   prP50: number | null
   prSample: number
   prQuality: string
+  prReasonCode: string | null
   releaseMedianDays: number | null
 }
 
@@ -326,6 +351,7 @@ export interface ComparisonBundle {
   requestedWindowDays: TimeWindow
   window: { start: string; end: string }
   mode: ComparisonMode
+  comparisonBasis: ComparisonBasis
   entries: ComparisonEntry[]
   notes: string[]
 }
@@ -348,6 +374,11 @@ export interface ResearchScatterPoint {
 export interface ResearchDataset {
   id: string
   name: string
+  analysisMode: ResearchAnalysisMode
+  populationScope: string
+  isProbabilitySample: boolean
+  datasetVersion: string | null
+  studyStatus: 'pending_confirmation' | 'approved_not_imported' | 'awaiting_collection' | 'analyzable'
   exploratory: boolean
   samplingSource: string
   samplingRule: string
@@ -369,6 +400,7 @@ export interface ResearchDataset {
     note: string
   }
   quality: { field: string; missingRate: number; collected: boolean }[]
+  metricQuality: { field: string; validSamples: number; missingCount: number; missingRate: number | null; reasons: string[] }[]
   limitations: string[]
 }
 

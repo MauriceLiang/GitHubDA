@@ -32,8 +32,9 @@ def get_research_statistics(
 
 
 @router.get("/research/data-quality", response_model=SuccessEnvelope[DataQualityResponse])
-def get_data_quality(request: Request, dataset_id: str, session: Session = Depends(get_session)):
-    return envelope(request, data_quality(session, dataset_id))
+def get_data_quality(request: Request, dataset_id: str, analysis_mode: Literal["formal", "exploratory"] = "formal", session: Session = Depends(get_session)):
+    expected_type = "featured" if analysis_mode == "exploratory" else "research"
+    return envelope(request, data_quality(session, dataset_id, expected_type))
 
 
 @router.post("/comparisons", response_model=SuccessEnvelope[ComparisonResponse])
@@ -48,6 +49,6 @@ def compare_activity_insights(request: Request, body: InsightsComparisonRequest,
 
 
 @router.get("/research/insights")
-def get_research_insights(request: Request, dataset_id: str, session: Session = Depends(get_session)):
+def get_research_insights(request: Request, dataset_id: str, analysis_mode: Literal["formal", "exploratory"] = "formal", session: Session = Depends(get_session)):
     from backend.app.services.insight_comparison import research_insights
-    return envelope(request, research_insights(session, dataset_id))
+    return envelope(request, research_insights(session, dataset_id, analysis_mode))
