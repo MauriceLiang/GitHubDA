@@ -168,8 +168,10 @@ def research_statistics(session: Session, dataset_id: str, language: str | None,
     }
 
 
-def data_quality(session: Session, dataset_id: str) -> dict[str, Any]:
-    dataset = _dataset(session, dataset_id)
+def data_quality(session: Session, dataset_id: str, expected_type: str = "research") -> dict[str, Any]:
+    if expected_type not in {"research", "featured"}:
+        raise AppError(422, "VALIDATION_ERROR", "不支持的数据集类型")
+    dataset = _dataset(session, dataset_id, expected_type)
     memberships = session.scalars(select(DatasetRepository).where(DatasetRepository.dataset_id == dataset_id)).all()
     rows = dataset_rows(session, dataset_id)
     total = len(memberships)
@@ -198,7 +200,11 @@ def data_quality(session: Session, dataset_id: str) -> dict[str, Any]:
     for item in memberships:
         if item.exclusion_status:
             exclusion_counts[item.exclusion_status] = exclusion_counts.get(item.exclusion_status, 0) + 1
-    notes = ["缺失率分母为当前数据集成员总数。", "研究样本只有导入带来源和筛选记录的清单后才具有研究证据。"]
+    notes = ["缺失率分母为当前数据集成员总数。"]
+    if expected_type == "research":
+        notes.append("研究样本只有导入带来源和筛选记录的清单后才具有研究证据。")
+    else:
+        notes.append("精选集合是策展探索样本，不代表 GitHub 全体，也不能作为概率抽样的正式研究样本。")
     if dataset.source_metadata_json:
         try:
             source_metadata = json.loads(dataset.source_metadata_json)
@@ -268,11 +274,12 @@ def compare_repositories(session: Session, repository_ids: list[int], depth: str
     }
 
 
-def export_repositories(session: Session, scope: str, dataset_id: str | None, language: str | None) -> tuple[str, str]:
+def export_repositories(session: Session, scope: str, dataset_id: str | None, language: str | None, analysis_mode: str = "formal") -> tuple[str, str]:
     if scope == "research":
         if not dataset_id:
             raise AppError(422, "VALIDATION_ERROR", "scope=research 时必须提供 dataset_id", {"fields": [{"field": "dataset_id", "message": "此字段必填"}]})
-        _dataset(session, dataset_id)
+        expected_type = "featured" if analysis_mode == "exploratory" else "research"
+        _dataset(session, dataset_id, expected_type)
     else:
         if dataset_id:
             raise AppError(422, "VALIDATION_ERROR", "scope=library 时不能提供 dataset_id", {"fields": [{"field": "dataset_id", "message": "library 范围不接收此字段"}]})

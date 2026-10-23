@@ -1,7 +1,7 @@
 import type {
-  CollectionSettings, CommitActivityPage, CommitEvent, ComparisonBundle, ComparisonEntry, ComparisonMode, Coverage, Granularity, HistogramResult, ReleaseDetails, ReleaseRecord,
+  CollectionSettings, CommitActivityPage, CommitEvent, ComparisonBasis, ComparisonBundle, ComparisonEntry, ComparisonMode, Coverage, Granularity, HistogramResult, ReleaseDetails, ReleaseRecord,
   IssueOnlineDetail, IssueRecordDetail, IssueRecordPage, Metric, Observation, PullRequestActivityDetail, PullRequestActivityPage, PullRequestOnlineDetail, RepositoryAnalysis, RepositoryStatus, RepositorySummary,
-  FeaturedDatasetImportResult, FeaturedDatasetStatus, FeaturedDatasetTaskSummary, ResearchDataset, ResearchGroup, ResearchScatterPoint, TaskItem, TaskStatus, TimePoint, TimeWindow,
+  FeaturedDatasetImportResult, FeaturedDatasetStatus, FeaturedDatasetTaskSummary, ResearchAnalysisMode, ResearchDataset, ResearchGroup, ResearchScatterPoint, TaskItem, TaskStatus, TimePoint, TimeWindow,
 } from './types'
 import type { RepositoryDataSource } from './repositoryDataSource'
 
@@ -124,6 +124,89 @@ function repositoryId(id: string): number {
   const parsed = Number(id)
   if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error('仓库编号无效，请从仓库列表重新打开')
   return parsed
+}
+function mapResearchDataset(selected: Record<string, any>, mode: ResearchAnalysisMode, insights: Record<string, any>, quality: Record<string, any>): ResearchDataset {
+  const datasetId = String(selected.dataset_id)
+  const rows = array(insights.rows)
+  const groups: ResearchGroup[] = array(insights.groups).map((group) => {
+    const metric = object(object(group.metrics).issue_median_hours)
+    return {
+      label: String(group.language ?? '未知'),
+      count: Number(group.n ?? 0),
+      medianCloseDays: numberOrNull(metric.median) === null ? null : Number((metric.median / 24).toFixed(1)),
+      p25: null,
+      p75: null,
+    }
+  })
+  const scatter: ResearchScatterPoint[] = rows.flatMap((row) => {
+    const values = object(row.values)
+    const issue = numberOrNull(values.issue_median_hours)
+    const pr = numberOrNull(values.pr_median_hours)
+    if (issue === null || pr === null) return []
+    return [{ repository: String(row.full_name), issueCloseDays: issue / 24, prMergeDays: pr / 24, group: String(row.language ?? '未知') }]
+  })
+  const correlation = object(insights.correlation)
+  const summary = object(insights.summary)
+  const issueSummary = object(summary.issue_median_hours)
+  const prSummary = object(summary.pr_median_hours)
+  const metricLabels: Record<string, string> = {
+    commits_weekly_mean: '每周 Commit 均值',
+    issue_median_hours: 'Issue 关闭耗时',
+    pr_median_hours: 'PR 合并耗时',
+    release_interval_days: '正式 Release 间隔',
+  }
+  const metricQuality: ResearchDataset['metricQuality'] = Object.entries(object(insights.metric_quality)).map(([key, value]) => {
+    const metric = object(value)
+    return {
+      field: metricLabels[key] ?? key,
+      validSamples: Number(metric.valid_samples ?? 0),
+      missingCount: Number(metric.missing_count ?? 0),
+      missingRate: numberOrNull(metric.missing_rate) === null ? null : Number((Number(metric.missing_rate) * 100).toFixed(1)),
+      reasons: array(metric.missing_reasons).map((item) => `${String(item.reason ?? '未知原因')}（${Number(item.count ?? 0)}）`),
+    }
+  })
+  const windows = new Set(rows.filter((row) => row.window_start && row.window_end).map((row) => `${row.window_start}|${row.window_end}`))
+  const uniqueWindow = windows.size === 1 ? [...windows][0].split('|') : [null, null]
+  const datasetVersion = textOrNull(insights.dataset_version)
+  const status = ['pending_confirmation', 'approved_not_imported', 'awaiting_collection', 'analyzable'].includes(insights.dataset_status)
+    ? insights.dataset_status as ResearchDataset['studyStatus']
+    : mode === 'exploratory' ? Number(insights.sample_size ?? 0) > 0 ? 'analyzable' : 'awaiting_collection' : 'pending_confirmation'
+  return {
+    id: datasetId,
+    name: String(selected.name ?? datasetId),
+    analysisMode: mode,
+    populationScope: String(insights.population_scope ?? (mode === 'exploratory' ? 'curated_featured' : 'formal_research_sample')),
+    isProbabilitySample: Boolean(insights.is_probability_sample),
+    datasetVersion,
+    studyStatus: status,
+    exploratory: mode === 'exploratory',
+    samplingSource: String(insights.source ?? (mode === 'exploratory' ? 'RepoVantage 精选数据包' : '正式研究数据集')),
+    samplingRule: datasetVersion ? `数据集版本 ${datasetVersion}` : selected.rules_version ? `规则版本 ${selected.rules_version}` : '后端未记录采样规则说明',
+    frozenAt: shortDate(selected.frozen_at),
+    eventWindow: { start: shortDate(uniqueWindow[0]), end: shortDate(uniqueWindow[1]) },
+    repositoryCount: Number(insights.sample_size ?? selected.sample_size ?? 0),
+    eventCount: null,
+    missingRate: numberOrNull(issueSummary.missing_rate) === null ? null : Number((issueSummary.missing_rate * 100).toFixed(1)),
+    issueMedianDays: numberOrNull(issueSummary.median) === null ? null : Number((issueSummary.median / 24).toFixed(1)),
+    issueSample: Number(issueSummary.count ?? 0),
+    prMedianDays: numberOrNull(prSummary.median) === null ? null : Number((prSummary.median / 24).toFixed(1)),
+    prSample: Number(prSummary.count ?? 0),
+    groups,
+    scatter: {
+      points: scatter,
+      spearman: numberOrNull(correlation.coefficient),
+      sampleSize: Number(correlation.n ?? scatter.length),
+      pValue: numberOrNull(correlation.p_value),
+      note: String(correlation.note ?? '仅在有效配对样本中计算'),
+    },
+    quality: array(quality.missing_fields).map((field) => ({
+      field: String(field.field ?? ''),
+      missingRate: numberOrNull(field.rate) === null ? 0 : Number((field.rate * 100).toFixed(1)),
+      collected: numberOrNull(field.rate) !== null,
+    })),
+    metricQuality,
+    limitations: Array.isArray(insights.limitations) ? insights.limitations.map(String) : [],
+  }
 }
 function mapStatus(value: unknown): RepositoryStatus {
   switch (value) {
@@ -710,88 +793,79 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
         issueP50: numberOrNull(issueMetric.value) === null ? null : Number((issueMetric.value / 24).toFixed(1)),
         issueSample: Number(issueMetric.valid_samples ?? 0),
         issueQuality: String(issueMetric.quality ?? 'missing'),
+        issueReasonCode: textOrNull(issueMetric.reason_code),
         prP50: numberOrNull(prMetric.value) === null ? null : Number((prMetric.value / 24).toFixed(1)),
         prSample: Number(prMetric.valid_samples ?? 0),
         prQuality: String(prMetric.quality ?? 'missing'),
+        prReasonCode: textOrNull(prMetric.reason_code),
         releaseMedianDays: numberOrNull(releaseMetric.value),
       }
     })
     const points = entries.flatMap((entry) => entry.points)
     const dates = points.map((point) => point.date).sort()
+    const rawBasis = object(result.comparison_basis)
+    const shared = object(rawBasis.shared_window)
+    const comparisonBasis: ComparisonBasis = {
+      scope: rawBasis.scope === 'shared_observation' ? 'shared_observation' : 'repository_windows',
+      requestedWindowDays: window,
+      sharedWindow: textOrNull(shared.start) && textOrNull(shared.end) ? { start: String(shared.start), end: String(shared.end) } : null,
+      effectiveDays: numberOrNull(rawBasis.effective_days),
+      minimumCoverageRatio: numberOrNull(rawBasis.minimum_coverage_ratio),
+      minimumEffectiveDays: numberOrNull(rawBasis.minimum_effective_days),
+      status: rawBasis.status === 'comparable' || rawBasis.status === 'not_comparable' ? rawBasis.status : 'separate_windows',
+      reasonCode: textOrNull(rawBasis.reason_code),
+      reason: textOrNull(rawBasis.reason),
+    }
     return {
-      window: { start: dates[0] ?? '—', end: dates[dates.length - 1] ?? '—' },
+      window: comparisonBasis.sharedWindow
+        ? { start: shortDate(comparisonBasis.sharedWindow.start) ?? '—', end: shortDate(comparisonBasis.sharedWindow.end) ?? '—' }
+        : { start: dates[0] ?? '—', end: dates[dates.length - 1] ?? '—' },
       requestedWindowDays: result.requested_window_days,
       entries,
       mode,
+      comparisonBasis,
       notes: Array.isArray(result.warnings) ? result.warnings.map(String) : [],
     }
   }
 
-  async getResearchDataset(id?: string): Promise<ResearchDataset> {
+  async getResearchDataset(id?: string, mode: ResearchAnalysisMode | 'auto' = 'auto'): Promise<ResearchDataset> {
     const datasets = await data<{ items: Record<string, any>[] }>('/datasets')
     const research = datasets.items.filter((item) => item.type === 'research')
-    const selected = research.find((item) => item.dataset_id === id) ?? research[0]
-    if (!selected) throw new Error('当前没有可分析的研究数据集')
-    const datasetId = String(selected.dataset_id)
-    const [insights, quality] = await Promise.all([
-      data<Record<string, any>>(`/research/insights?dataset_id=${encodeURIComponent(datasetId)}`),
-      data<Record<string, any>>(`/research/data-quality?dataset_id=${encodeURIComponent(datasetId)}`),
-    ])
-    const rows = array(insights.rows)
-    const groups: ResearchGroup[] = array(insights.groups).map((group) => {
-      const metric = object(object(group.metrics).issue_median_hours)
-      return {
-        label: String(group.language ?? '未知'),
-        count: Number(group.n ?? 0),
-        medianCloseDays: numberOrNull(metric.median) === null ? null : Number((metric.median / 24).toFixed(1)),
-        p25: null,
-        p75: null,
-      }
-    })
-    const scatter: ResearchScatterPoint[] = rows.flatMap((row) => {
-      const values = object(row.values)
-      const issue = numberOrNull(values.issue_median_hours)
-      const pr = numberOrNull(values.pr_median_hours)
-      if (issue === null || pr === null) return []
-      return [{ repository: String(row.full_name), issueCloseDays: issue / 24, prMergeDays: pr / 24, group: String(row.language ?? '未知') }]
-    })
-    const correlation = object(insights.correlation)
-    const summary = object(insights.summary)
-    const issueSummary = object(summary.issue_median_hours)
-    const prSummary = object(summary.pr_median_hours)
-    const windows = new Set(rows.filter((row) => row.window_start && row.window_end).map((row) => `${row.window_start}|${row.window_end}`))
-    const uniqueWindow = windows.size === 1 ? [...windows][0].split('|') : [null, null]
-    return {
-      id: datasetId,
-      name: String(selected.name ?? datasetId),
-      exploratory: false,
-      samplingSource: '项目研究数据集',
-      samplingRule: selected.rules_version ? `规则版本 ${selected.rules_version}` : '后端未记录采样规则说明',
-      frozenAt: shortDate(selected.frozen_at),
-      eventWindow: { start: shortDate(uniqueWindow[0]), end: shortDate(uniqueWindow[1]) },
-      repositoryCount: Number(insights.sample_size ?? selected.sample_size ?? 0),
-      eventCount: null,
-      missingRate: numberOrNull(issueSummary.missing_rate) === null ? null : Number((issueSummary.missing_rate * 100).toFixed(1)),
-      issueMedianDays: numberOrNull(issueSummary.median) === null ? null : Number((issueSummary.median / 24).toFixed(1)),
-      issueSample: Number(issueSummary.count ?? 0),
-      prMedianDays: numberOrNull(prSummary.median) === null ? null : Number((prSummary.median / 24).toFixed(1)),
-      prSample: Number(prSummary.count ?? 0),
-      groups,
-      scatter: {
-        points: scatter,
-        spearman: numberOrNull(correlation.coefficient),
-        sampleSize: Number(correlation.n ?? scatter.length),
-        pValue: numberOrNull(correlation.p_value),
-        note: String(correlation.note ?? '仅在有效配对样本中计算'),
-      },
-      quality: array(quality.missing_fields).map((field) => ({
-        field: String(field.field ?? ''),
-        missingRate: numberOrNull(field.rate) === null ? 0 : Number((field.rate * 100).toFixed(1)),
-        collected: numberOrNull(field.rate) !== null,
-      })),
-      limitations: Array.isArray(insights.limitations) ? insights.limitations.map(String) : [],
+    const featured = datasets.items.filter((item) => item.type === 'featured')
+    const load = async (selected: Record<string, any>, selectedMode: ResearchAnalysisMode): Promise<ResearchDataset> => {
+      const datasetId = String(selected.dataset_id)
+      const query = new URLSearchParams({ dataset_id: datasetId, analysis_mode: selectedMode })
+      const [insights, quality] = await Promise.all([
+        data<Record<string, any>>(`/research/insights?${query}`),
+        data<Record<string, any>>(`/research/data-quality?${query}`),
+      ])
+      return mapResearchDataset(selected, selectedMode, insights, quality)
     }
+
+    if (mode === 'auto' && !id) {
+      const formal = research[0]
+      if (formal) {
+        const formalResult = await load(formal, 'formal')
+        if (formalResult.studyStatus === 'analyzable') return formalResult
+      }
+      const curated = featured.find((item) => item.dataset_id === 'featured-default') ?? featured[0]
+      if (curated) return load(curated, 'exploratory')
+      if (formal) return load(formal, 'formal')
+      throw new Error('当前没有可分析的研究或精选数据集')
+    }
+
+    const requestedMode = mode === 'auto' ? 'formal' : mode
+    const pool = requestedMode === 'formal' ? research : featured
+    const selected = pool.find((item) => item.dataset_id === id) ?? pool[0]
+    if (!selected) throw new Error(requestedMode === 'formal' ? '当前没有可分析的正式研究数据集' : '当前没有精选数据集')
+    return load(selected, requestedMode)
   }
+
+  async exportResearchStatistics(datasetId: string, mode: ResearchAnalysisMode): Promise<Blob> {
+    const params = new URLSearchParams({ dataset_id: datasetId, analysis_mode: mode })
+    return csv(`/exports/research-insights.csv?${params}`)
+  }
+
 
   async listTasks(): Promise<TaskItem[]> {
     const result = await data<{ items: Record<string, any>[] }>('/tasks?per_page=100')
@@ -873,9 +947,10 @@ export class HttpRepositoryDataSource implements RepositoryDataSource {
     return csv(`/exports/comparison.csv?${params}`)
   }
 
-  exportRepositories(scope: 'library' | 'research', datasetId?: string): Promise<Blob> {
+  exportRepositories(scope: 'library' | 'research', datasetId?: string, mode: ResearchAnalysisMode = 'formal'): Promise<Blob> {
     const params = new URLSearchParams({ scope })
     if (datasetId) params.set('dataset_id', datasetId)
+    if (scope === 'research') params.set('analysis_mode', mode)
     return csv(`/exports/repositories.csv?${params}`)
   }
 }

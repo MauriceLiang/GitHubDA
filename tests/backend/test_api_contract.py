@@ -6,7 +6,7 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.app.core.clock import utc_now
 from backend.app.persistence.db import Base
-from backend.app.persistence.models import AnalysisResult, CollectionTask, Dataset, DatasetRepository, RepositorySnapshot
+from backend.app.persistence.models import AnalysisResult, CollectionTask, Dataset, DatasetRepository, Repository, RepositorySnapshot
 from backend.app.services.repositories import LIBRARY_ID
 from backend.app.worker.executor import execute_task
 from backend.app.worker.queue import claim_next_task
@@ -217,6 +217,63 @@ def test_empty_dataset_and_research_responses_preserve_nullable_contract(backend
     assert schemas["MissingFieldResponse"]["properties"]["rate"]["anyOf"][-1] == {"type": "null"}
 
 
+def test_exploratory_research_uses_only_explicit_featured_memberships(backend_client):
+    from datetime import datetime, timedelta
+
+    from backend.app.core.clock import iso_z
+    from backend.app.services.insights import persist_insights
+
+    client, factory, _github = backend_client
+    start = datetime(2026, 7, 20)
+    end = start + timedelta(days=90)
+    with factory() as session:
+        featured = session.get(Dataset, "featured-default")
+        featured.rules_version = "featured-v1.0.0"
+        featured.source_metadata_json = '{"version":"featured-v1.0.0"}'
+        session.add(Repository(repository_id=456, full_name="fixture/featured", html_url="https://github.com/fixture/featured", language="Python"))
+        session.flush()
+        session.add(DatasetRepository(dataset_id="featured-default", repository_id=456))
+        raw = {
+            "commits": [{"sha": "a" * 40, "commit": {"committer": {"date": iso_z(end - timedelta(days=2))}}}],
+            "issues": [{"id": 1, "created_at": iso_z(end - timedelta(days=3)), "closed_at": iso_z(end - timedelta(days=2))}],
+            "pulls": [],
+            "releases": [],
+        }
+        sources = {module: {"coverage": "complete"} for module in raw}
+        sources["releases"]["requested_interval"] = [iso_z(end - timedelta(days=365)), iso_z(end)]
+        persist_insights(session, 456, "featured-source", raw, sources, start, end, [])
+        session.commit()
+
+    formal = client.get("/api/v1/research/insights?dataset_id=research-2026-v1", headers=HEADERS)
+    exploratory = client.get("/api/v1/research/insights?dataset_id=featured-default&analysis_mode=exploratory", headers=HEADERS)
+    assert formal.status_code == exploratory.status_code == 200
+    assert formal.json()["data"]["analysis_mode"] == "formal"
+    assert formal.json()["data"]["dataset_status"] == "pending_confirmation"
+    curated = exploratory.json()["data"]
+    assert curated["population_scope"] == "curated_featured"
+    assert curated["is_probability_sample"] is False
+    assert curated["dataset_version"] == "featured-v1.0.0"
+    assert curated["sample_size"] == 1
+    assert [row["full_name"] for row in curated["rows"]] == ["fixture/featured"]
+    issue_quality = curated["metric_quality"]["issue_median_hours"]
+    assert issue_quality["valid_samples"] == 1
+    assert issue_quality["missing_count"] == 0
+    assert curated["rows"][0]["metric_quality"]["issue_median_hours"]["status"] == "ready"
+
+    wrong_formal_type = client.get("/api/v1/research/insights?dataset_id=featured-default", headers=HEADERS)
+    wrong_exploratory_type = client.get("/api/v1/research/insights?dataset_id=research-2026-v1&analysis_mode=exploratory", headers=HEADERS)
+    assert wrong_formal_type.status_code == wrong_exploratory_type.status_code == 422
+    assert client.get("/api/v1/research/data-quality?dataset_id=featured-default", headers=HEADERS).status_code == 422
+    featured_quality = client.get("/api/v1/research/data-quality?dataset_id=featured-default&analysis_mode=exploratory", headers=HEADERS)
+    assert featured_quality.status_code == 200
+    assert featured_quality.json()["data"]["records_total"] == 1
+    member_export = client.get("/api/v1/exports/repositories.csv?scope=research&dataset_id=featured-default&analysis_mode=exploratory", headers=HEADERS)
+    statistics_export = client.get("/api/v1/exports/research-insights.csv?dataset_id=featured-default&analysis_mode=exploratory", headers=HEADERS)
+    assert member_export.status_code == statistics_export.status_code == 200
+    assert "fixture/featured" in member_export.text
+    assert "总体范围" in statistics_export.text and "curated_featured" in statistics_export.text
+
+
 def test_all_v1_routes_are_present_in_openapi():
     from backend.app.main import app
 
@@ -228,7 +285,7 @@ def test_all_v1_routes_are_present_in_openapi():
         "/api/v1/repositories/{repository_id}/analysis", "/api/v1/repositories/{repository_id}/series",
         "/api/v1/tasks", "/api/v1/tasks/{task_id}", "/api/v1/tasks/{task_id}/retry", "/api/v1/datasets",
         "/api/v1/overview", "/api/v1/research/statistics", "/api/v1/research/data-quality",
-        "/api/v1/comparisons", "/api/v1/exports/repositories.csv", "/api/v1/exports/comparison.csv",
+        "/api/v1/comparisons", "/api/v1/exports/repositories.csv", "/api/v1/exports/comparison.csv", "/api/v1/exports/research-insights.csv",
     }
     assert expected <= set(paths)
     assert paths["/api/v1/github/search"]["get"]["responses"]["422"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/ErrorResponse"

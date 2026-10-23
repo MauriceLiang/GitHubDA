@@ -12,7 +12,15 @@ assert.ok(chrome, '必须设置 CHROME_PATH，指向独立测试 Chromium 可执
 await access(chrome, constants.X_OK).catch(() => { throw new Error(`CHROME_PATH 不存在或不可执行：${chrome}`) })
 const artifacts = process.env.E2E_ARTIFACT_DIR ? resolve(process.env.E2E_ARTIFACT_DIR) : await mkdtemp(join(tmpdir(), 'repovantage-window-e2e-'))
 await mkdir(artifacts, { recursive: true })
-const report = { baseUrl: base.href, dataMode: 'mock', scenarios: [], realGitHubApi: 'not_run' }
+const report = {
+  command: process.env.E2E_COMMAND ?? 'npm run test:e2e:analysis-window',
+  baseUrl: base.href,
+  dataMode: 'mock',
+  scenarios: [],
+  failures: [],
+  notRun: ['真实后端浏览器模式与 Worker 联调', 'GitHub REST API（本次刻意不请求）', '正式 30 仓库冻结与数据包导入（待负责人批准）'],
+  realGitHubApi: 'not_run',
+}
 
 function parseCsv(text) {
   const rows = []
@@ -32,8 +40,9 @@ function parseCsv(text) {
   return rows.map((values) => Object.fromEntries(header.map((name, i) => [name, values[i]])))
 }
 
-const browser = await puppeteer.launch({ executablePath: chrome, headless: true, args: process.platform === 'linux' ? ['--no-sandbox'] : [] })
+let browser
 try {
+  browser = await puppeteer.launch({ executablePath: chrome, headless: true, args: process.platform === 'linux' ? ['--no-sandbox'] : [] })
   for (const theme of ['light', 'dark']) {
     const context = await browser.createBrowserContext()
     const page = await context.newPage()
@@ -95,6 +104,11 @@ try {
     await navigate('/tasks')
     await page.waitForSelector('[data-testid="task-row"]')
     assert.equal((await page.$$('[data-task-id^="mock-refresh-"]')).length, 0, '切换窗口和模式不得自动创建任务')
+    assert.match(await text('[data-task-id="t4"]'), /GitHub API 速率限制/, '失败与限流原因应保留在任务记录中')
+    assert.match(await text('[data-task-id="t3"]'), /部分完成/, '数据不足/部分完成状态应可见')
+    await click('[data-task-id="t4"] button')
+    const retriedTask = await page.waitForSelector('[data-task-id^="mock-retry-"]')
+    assert.match(await retriedTask.evaluate((element) => element.textContent ?? ''), /排队中.*等待 Worker 重新执行/s, '重试后应出现新的排队任务')
     await navigate('/repositories')
     await navigate('/repositories/steady-core/overview')
     const days = theme === 'light' ? 180 : 30
@@ -123,9 +137,14 @@ try {
         assert.equal((await page.$$('[data-testid="comparison-row"][data-window-available="false"]')).length, 2)
       }
     }
+    await select('comparison-window', 90)
+    await page.waitForFunction(() => document.querySelector('[data-testid="comparison-description"]')?.getAttribute('aria-busy') === 'false')
+    await select('comparison-mode', 'same_period')
+    await page.waitForFunction(() => document.querySelector('[data-testid="comparison-basis"]')?.getAttribute('data-status') === 'comparable')
+    assert.match(await text('[data-testid="comparison-basis"]'), /交集 .* 天 \/ 最低 .* 天/)
     await select('comparison-mode', 'individual_periods')
     await page.waitForFunction(() => document.querySelector('[data-testid="comparison-description"]')?.getAttribute('data-mode') === 'individual_periods')
-    assert.equal(await page.$eval('[data-testid="comparison-window"] button[aria-pressed="true"]', (element) => element.getAttribute('data-value')), '180')
+    assert.equal(await page.$eval('[data-testid="comparison-window"] button[aria-pressed="true"]', (element) => element.getAttribute('data-value')), '90')
 
     const session = await page.createCDPSession()
     for (const selected of [30, 180]) {
@@ -160,6 +179,51 @@ try {
         }
       }
     }
+
+    if (theme === 'light') {
+      await navigate('/research')
+      await page.waitForSelector('[data-testid="research-empty-state"]')
+      assert.equal(await page.$('[data-testid="research-kpis"]'), null, '精选样本未导入时不应展示空指标与图表')
+      assert.equal(await page.$('[data-testid="export-research-statistics"]'), null, '空样本不应导出统计结果')
+      await select('research-mode', 'formal')
+      await page.waitForFunction(() => document.querySelector('[data-testid="research-empty-state"]')?.textContent?.includes('待负责人确认'))
+      assert.equal(await page.$('[data-testid="import-featured"]'), null, '正式研究模式不能自动导入或替换样本')
+      await select('research-mode', 'exploratory')
+      await click('[data-testid="import-featured"]')
+      await page.waitForFunction(() => document.querySelector('[data-testid="import-featured"]')?.textContent?.includes('精选数据导入中'), { timeout: 5000 })
+      await navigate('/tasks')
+      const importTask = await page.waitForSelector('[data-task-id^="mock-featured-import-"]')
+      assert.match(await importTask.evaluate((element) => element.textContent ?? ''), /排队中|正在导入/, '精选导入需要展示进行中状态')
+      const taskId = await importTask.evaluate((element) => element.getAttribute('data-task-id'))
+      await page.waitForFunction((id) => document.querySelector(`[data-task-id="${id}"]`)?.textContent?.includes('精选数据导入完成'), { timeout: 20000 }, taskId)
+      await navigate('/research')
+      await page.waitForSelector('[data-testid="research-kpis"]')
+      assert.ok(Number(await text('[data-testid="research-sample-count"]')) > 0, '精选任务完成后应展示已导入样本统计')
+      const researchDir = await mkdtemp(join(artifacts, `${theme}-research-download-`))
+      await session.send('Browser.setDownloadBehavior', { behavior: 'allow', browserContextId: context.id, downloadPath: researchDir })
+      await click('[data-testid="export-research-statistics"]')
+      let statsFile
+      for (let attempt = 0; attempt < 100 && !statsFile; attempt++) {
+        statsFile = (await readdir(researchDir)).find((name) => name.endsWith('.csv'))
+        if (!statsFile) await delay(100)
+      }
+      assert.ok(statsFile, '未下载到研究统计 CSV')
+      const statsText = await readFile(join(researchDir, statsFile), 'utf8')
+      assert.match(statsText, /总体范围/)
+      assert.match(statsText, /curated_featured/)
+      await click('[data-testid="export-research-members"]')
+      let memberFile
+      for (let attempt = 0; attempt < 100 && !memberFile; attempt++) {
+        memberFile = (await readdir(researchDir)).filter((name) => name.endsWith('.csv')).find((name) => name !== statsFile)
+        if (!memberFile) await delay(100)
+      }
+      assert.ok(memberFile, '未下载到样本成员 CSV')
+      const members = parseCsv(await readFile(join(researchDir, memberFile), 'utf8'))
+      assert.equal(members.length, 86)
+      assert.equal(members[0].dataset_id, 'featured-default')
+      await navigate('/compare')
+    }
+
     await layout('[data-testid="comparison-window"]')
     await layout('[data-testid="comparison-window-unavailable"]')
     await page.screenshot({ path: join(artifacts, `${theme}-comparison.png`) })
@@ -171,12 +235,15 @@ try {
     await page.screenshot({ path: join(artifacts, `${theme}-mobile.png`) })
     assert.deepEqual(apiRequests, [], 'Mock smoke 不应访问后端或真实 GitHub API')
     assert.deepEqual(errors, [], '浏览器出现未处理错误')
-    report.scenarios.push({ theme, status: 'passed', collectionMode: mode, collectionDays: days, checks: ['analysis-windows', 'no-automatic-task', 'collection-scope', 'comparison-windows', 'mode-preserves-window', 'csv-30-180', 'layout-desktop-mobile'] })
+    report.scenarios.push({ theme, status: 'passed', collectionMode: mode, collectionDays: days, checks: ['analysis-windows', 'no-automatic-task', 'collection-scope', 'comparison-windows', 'mode-preserves-window', 'csv-30-180', 'insufficient-data-visible', 'failure-and-rate-limit-visible', 'retry-requeues-task', ...(theme === 'light' ? ['research-mode-isolation', 'featured-import-progress', 'featured-import-task', 'research-member-and-statistics-csv'] : []), 'layout-desktop-mobile'] })
     await context.close()
     console.log(`PASS ${theme}: analysis, collection, comparison, CSV, layout`)
   }
+} catch (error) {
+  report.failures.push(error instanceof Error ? error.message : String(error))
+  throw error
 } finally {
   await writeFile(join(artifacts, 'report.json'), JSON.stringify(report, null, 2) + '\n')
-  await browser.close()
+  await browser?.close()
   console.log(`Artifacts: ${artifacts}`)
 }

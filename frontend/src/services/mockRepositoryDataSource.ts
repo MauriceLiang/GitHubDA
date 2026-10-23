@@ -1,7 +1,7 @@
 import type {
   AuthorContribution, CommitActivityPage, CommitEvent, ComparisonBundle, ComparisonEntry, Coverage, Granularity, HistogramResult,
   IssueOnlineDetail, IssueRecord, IssueRecordDetail, IssueRecordPage, Metric, PullRequestActivityDetail, PullRequestActivityRecord, PullRequestActivityPage, PullRequestOnlineDetail, PullRequestRecord, ReleaseDetails, ReleaseRecord, RepositoryAnalysis, RepositorySummary,
-  ComparisonMode, FeaturedDatasetTaskSummary, ResearchDataset, TaskItem, TimePoint, TimeSeriesResult, TimeWindow,
+  ComparisonMode, FeaturedDatasetTaskSummary, ResearchAnalysisMode, ResearchDataset, TaskItem, TimePoint, TimeSeriesResult, TimeWindow,
 } from './types'
 import type { RepositoryDataSource } from './repositoryDataSource'
 import { addDays, addWeeks, iso, REPOSITORIES, repoSeed, type RepoSeed } from '@/mocks/catalog'
@@ -267,6 +267,7 @@ const COMMIT_TITLES = ['feat: 周聚合改为事件日期', 'fix: 排除 PR 类�
 
 export class MockRepositoryDataSource implements RepositoryDataSource {
   private requestedScopeTask: TaskItem | null = null
+  private retryTasks: TaskItem[] = []
 
   private githubMaxPages = 10
   private featuredImport: { taskId: string; startedAt: number; retryOf: string | null } | null = null
@@ -731,13 +732,23 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
         issueP50: issueQuality === 'ready' ? seed.issueP50 : null,
         issueSample,
         issueQuality,
+        issueReasonCode: issueQuality === 'ready' ? null : 'METRIC_QUALITY_NOT_READY',
         prP50: prQuality === 'ready' ? seed.prP50 : null,
         prSample,
         prQuality,
+        prReasonCode: prQuality === 'ready' ? null : 'METRIC_QUALITY_NOT_READY',
         releaseMedianDays: available && seed.coverage.state === 'complete' ? releaseMedian : null,
       }
     })
-    const sameObservationWindow = entries.every((entry) => entry.windowAvailable && entry.windowStart === entries[0]?.windowStart && entry.windowEnd === entries[0]?.windowEnd)
+    const availableWindows = entries.filter((entry) => entry.windowAvailable && entry.windowStart && entry.windowEnd)
+    const sharedStart = availableWindows.length === entries.length ? Math.max(...availableWindows.map((entry) => Date.parse(entry.windowStart!))) : NaN
+    const sharedEnd = availableWindows.length === entries.length ? Math.min(...availableWindows.map((entry) => Date.parse(entry.windowEnd!))) : NaN
+    const effectiveDays = sharedEnd > sharedStart ? (sharedEnd - sharedStart) / DAY : null
+    const sharedReasonCode = availableWindows.length !== entries.length
+      ? 'MISSING_REPOSITORY_WINDOW'
+      : effectiveDays === null ? 'NO_SHARED_WINDOW'
+        : effectiveDays < window * 0.8 ? 'SHARED_WINDOW_BELOW_THRESHOLD' : null
+    const sameObservationWindow = effectiveDays !== null && sharedReasonCode === null
     if (mode === 'same_period') {
       const commonWeeks = new Set(entries[0]?.points.map((point) => point.date) ?? [])
       entries.slice(1).forEach((entry) => {
@@ -750,17 +761,33 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
         issueP50: sameObservationWindow ? entry.issueP50 : null,
         prP50: sameObservationWindow ? entry.prP50 : null,
         releaseMedianDays: sameObservationWindow ? entry.releaseMedianDays : null,
+        issueReasonCode: sameObservationWindow ? entry.issueReasonCode : sharedReasonCode,
+        prReasonCode: sameObservationWindow ? entry.prReasonCode : sharedReasonCode,
       }))
     }
     const dates = entries.flatMap((entry) => entry.points.map((point) => point.date)).sort()
+    const comparisonBasis = {
+      scope: mode === 'same_period' ? 'shared_observation' as const : 'repository_windows' as const,
+      requestedWindowDays: window,
+      sharedWindow: mode === 'same_period' && sharedReasonCode !== 'MISSING_REPOSITORY_WINDOW' && effectiveDays !== null
+        ? { start: new Date(sharedStart).toISOString(), end: new Date(sharedEnd).toISOString() }
+        : null,
+      effectiveDays,
+      minimumCoverageRatio: mode === 'same_period' ? 0.8 : null,
+      minimumEffectiveDays: mode === 'same_period' ? window * 0.8 : null,
+      status: mode === 'individual_periods' ? 'separate_windows' as const : sameObservationWindow ? 'comparable' as const : 'not_comparable' as const,
+      reasonCode: mode === 'individual_periods' ? 'INDIVIDUAL_WINDOWS_ASYNC' : sharedReasonCode,
+      reason: mode === 'individual_periods' ? '各仓库分别使用自身分析窗口；结果不代表同期对比。' : sameObservationWindow ? null : sharedReasonCode === 'NO_SHARED_WINDOW' ? '所选仓库的分析窗口没有时间交集。' : sharedReasonCode === 'SHARED_WINDOW_BELOW_THRESHOLD' ? `共同观察窗口为 ${effectiveDays?.toFixed(1)} 天，少于所选 ${window} 天窗口的 80%。` : '至少一个仓库没有覆盖所选窗口的分析运行。',
+    }
     return {
-      window: { start: dates[0] ?? '—', end: dates.at(-1) ?? '—' },
+      window: comparisonBasis.sharedWindow ? { start: comparisonBasis.sharedWindow.start.slice(0, 10), end: comparisonBasis.sharedWindow.end.slice(0, 10) } : { start: dates[0] ?? '—', end: dates.at(-1) ?? '—' },
       requestedWindowDays: window,
       entries,
       mode,
+      comparisonBasis,
       notes: [
         ...entries.filter((entry) => !entry.windowAvailable).map((entry) => `${entry.label}：${entry.windowReason}`),
-        ...(mode === 'same_period' && !sameObservationWindow ? ['仓库观察窗口不一致；Issue、PR 与发布间隔暂不按同期口径比较。'] : []),
+        ...(mode === 'same_period' && !sameObservationWindow ? [comparisonBasis.reason ?? '所选仓库没有足够长的共同观察窗口。'] : []),
         ...(mode === 'individual_periods' ? ['各仓库分别使用自身完整周与可用指标；观察窗口可能不同，不代表同期对比。'] : []),
         '各仓库采集时间与覆盖状态不同，差异可能来自采集而非项目本身。',
         '缺乏有效样本或无法按当前口径比较的指标显示为「—」。',
@@ -768,7 +795,38 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
     }
   }
 
-  async getResearchDataset(id = 'research-2025q1'): Promise<ResearchDataset> {
+  async getResearchDataset(id = 'featured-default', mode: ResearchAnalysisMode | 'auto' = 'auto'): Promise<ResearchDataset> {
+    const analysisMode: ResearchAnalysisMode = mode === 'formal' ? 'formal' : 'exploratory'
+    if (analysisMode === 'formal' || this.featuredImportSummary()?.status !== 'succeeded') {
+      return {
+        id: analysisMode === 'formal' ? 'research-2026-v1' : id,
+        name: analysisMode === 'formal' ? '正式研究样本 v1' : 'RepoVantage 精选数据',
+        analysisMode,
+        populationScope: analysisMode === 'formal' ? 'formal_research_sample' : 'curated_featured',
+        isProbabilitySample: false,
+        datasetVersion: analysisMode === 'formal' ? null : 'featured-v1.0.0-demo',
+        studyStatus: analysisMode === 'formal' ? 'pending_confirmation' : 'awaiting_collection',
+        exploratory: analysisMode === 'exploratory',
+        samplingSource: analysisMode === 'formal' ? '正式研究样本清单' : 'RepoVantage 精选数据包',
+        samplingRule: analysisMode === 'formal' ? '待负责人确认采样方案' : '当前精选包尚未导入',
+        frozenAt: null,
+        eventWindow: { start: null, end: null },
+        repositoryCount: 0,
+        eventCount: null,
+        missingRate: null,
+        issueMedianDays: null,
+        issueSample: 0,
+        prMedianDays: null,
+        prSample: 0,
+        groups: [],
+        scatter: { points: [], spearman: null, sampleSize: 0, pValue: null, note: '暂无可分析成员' },
+        quality: [],
+        metricQuality: [],
+        limitations: analysisMode === 'exploratory'
+          ? ['精选集合是策展样本，不是概率抽样；导入后才显示本地采集结果。']
+          : ['正式研究样本仍待负责人确认；不会自动冻结或导入研究成员。'],
+      }
+    }
     const groups = [
       { label: 'TypeScript', count: 28, medianCloseDays: 4.2, p25: 2.1, p75: 8.4 },
       { label: 'JavaScript', count: 19, medianCloseDays: 5.6, p25: 2.8, p75: 11.2 },
@@ -789,7 +847,12 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
     })
     return {
       id,
-      name: 'research-2025q1',
+      name: 'RepoVantage 精选数据',
+      analysisMode,
+      populationScope: 'curated_featured',
+      isProbabilitySample: false,
+      datasetVersion: 'featured-v1.0.0',
+      studyStatus: 'analyzable',
       exploratory: true,
       samplingSource: 'GitHub 搜索 · language:typescript/python/go，stars 1000–50000',
       samplingRule: '排除镜像与归档仓库，每语言最多 30 个；优先保留至少 1 次正式发布的仓库',
@@ -818,6 +881,12 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
         { field: 'license', missingRate: 0.8, collected: true },
         { field: 'first_response', missingRate: 38.6, collected: false },
       ],
+      metricQuality: [
+        { field: '每周 Commit 均值', validSamples: 86, missingCount: 0, missingRate: 0, reasons: [] },
+        { field: 'Issue 关闭耗时', validSamples: 82, missingCount: 4, missingRate: 4.7, reasons: ['尚无事件级分析运行（4）'] },
+        { field: 'PR 合并耗时', validSamples: 78, missingCount: 8, missingRate: 9.3, reasons: ['采集覆盖不完整（8）'] },
+        { field: '正式 Release 间隔', validSamples: 40, missingCount: 46, missingRate: 53.5, reasons: ['样本不足（46）'] },
+      ],
       limitations: [
         '仅覆盖 stars 1000–50000 且 2025 年 1–2 月有活动的仓库，不代表 GitHub 全体。',
         'first_response 尚未采集，相关性分析未包含该字段。',
@@ -836,6 +905,7 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
       { id: 't5', repository: 'demo-labs/steady-core', module: 'commits', status: 'done', stage: '已完成', processed: 1304, total: 1304, updatedAt: '今天 02:14' },
       { id: 't6', repository: 'demo-labs/tiny-lab', module: 'issues', status: 'analyzing', stage: '统计分位数 · 3 / 7 条', processed: 3, total: 7, updatedAt: '刚刚' },
       ...(this.requestedScopeTask ? [this.requestedScopeTask] : []),
+      ...this.retryTasks,
       { id: 'mock-featured-failed', taskType: 'dataset_import', targetType: 'dataset', targetId: 'featured-default', repository: '精选仓库数据集', module: 'dataset_import', version: 'featured-v1.0.0-demo', status: 'failed', stage: '演示失败样例：暂存校验未通过', updatedAt: '昨天', error: '演示失败状态，可点击重试', isDemo: true },
       ...(demoImport ? [demoImport] : []),
     ]
@@ -846,7 +916,23 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
       this.startFeaturedImport(id)
       return this.featuredImport!.taskId
     }
-    return 'mock-task-retry'
+    const failed = (await this.listTasks()).find((task) => task.id === id)
+    if (!failed) return 'mock-task-retry'
+    const retryId = `mock-retry-${Date.now()}`
+    this.retryTasks.push({
+      ...failed,
+      id: retryId,
+      status: 'queued',
+      stage: '等待 Worker 重新执行',
+      progressPercent: null,
+      progressKind: 'unknown',
+      processed: 0,
+      processedRecords: 0,
+      error: undefined,
+      retryOf: id,
+      updatedAt: '刚刚',
+    })
+    return retryId
   }
   async exportInsights(_id: string, _windowDays: TimeWindow): Promise<Blob> { return new Blob(['demo export'], { type: 'text/csv' }) }
   async exportComparison(ids: string[], windowDays: TimeWindow, mode: ComparisonMode): Promise<Blob> {
@@ -857,7 +943,24 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
     ]
     return new Blob(['\ufeff', cells.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' })
   }
-  async exportRepositories(): Promise<Blob> { return new Blob(['demo export'], { type: 'text/csv' }) }
+  async exportRepositories(scope: 'library' | 'research' = 'library', datasetId = 'featured-default', mode: ResearchAnalysisMode = 'exploratory'): Promise<Blob> {
+    if (scope !== 'research') return new Blob(['repository_id,full_name\n'], { type: 'text/csv;charset=utf-8' })
+    const data = await this.getResearchDataset(datasetId, mode)
+    const rows = Array.from({ length: data.repositoryCount }, (_, index) => [index + 1, `sample-${String(index + 1).padStart(2, '0')}`, '', '', '', '', '', '', '', 'completed', data.id])
+    const cells = [['repository_id', 'full_name', 'description', 'language', 'stars', 'forks', 'created_at', 'pushed_at', 'collected_at', 'analysis_status', 'dataset_id'], ...rows]
+    return new Blob(['\ufeff', cells.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' })
+  }
+  async exportResearchStatistics(datasetId: string, mode: ResearchAnalysisMode): Promise<Blob> {
+    const data = await this.getResearchDataset(datasetId, mode)
+    const header = ['数据集 ID', '分析模式', '总体范围', '是否概率样本', '数据集版本', '样本总数', '统计层级', '分组', '指标', '有效样本', '缺失样本', '均值', '中位数', '标准差', '单位', '方法与限制']
+    const overall = [
+      ['每周 Commit 均值', 0, 0, null, null, null, '次/周'],
+      ['Issue 关闭耗时 P50', data.issueSample, Math.max(0, data.repositoryCount - data.issueSample), null, data.issueMedianDays, null, '天'],
+      ['PR 合并耗时 P50', data.prSample, Math.max(0, data.repositoryCount - data.prSample), null, data.prMedianDays, null, '天'],
+      ['正式 Release 间隔 P50', 0, data.repositoryCount, null, null, null, '天'],
+    ].map(([metric, count, missing, mean, median, std, unit]) => [data.id, mode, data.populationScope, data.isProbabilitySample, data.datasetVersion, data.repositoryCount, '总体', '全部成员', metric, count, missing, mean, median, std, unit, data.limitations.join(' ')])
+    return new Blob(['\ufeff', [header, ...overall].map((row) => row.map((value) => `"${String(value ?? '').replaceAll('"', '""')}"`).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' })
+  }
 }
 
 export type { AuthorContribution }
