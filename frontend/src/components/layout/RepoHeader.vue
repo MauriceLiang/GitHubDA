@@ -75,7 +75,7 @@ async function exportCsv() {
       <div class="mt-3 flex flex-wrap items-center gap-3 text-[12.5px] text-muted">
         <span v-if="repository.language" class="flex items-center gap-1.5"><Code2 :size="13" /> {{ repository.language }}</span>
         <span v-if="repository.license" class="flex items-center gap-1.5"><Scale :size="13" /> {{ repository.license }} 许可</span>
-        <span class="flex items-center gap-1.5"><CalendarDays :size="13" /> {{ windowStart ?? '—' }} — {{ windowEnd ?? '—' }}</span>
+        <span class="flex items-center gap-1.5" data-testid="analysis-window-summary"><CalendarDays :size="13" /> {{ analysis.timeWindow }} 天 · {{ windowStart ?? '—' }} — {{ windowEnd ?? '—' }}</span>
         <span class="flex items-center gap-1.5"><Database :size="13" /> 分析于 {{ collectedAt ?? '—' }}</span>
         <span class="flex items-center gap-1.5" :class="coverage.state !== 'complete' ? 'font-medium text-warnfg' : ''">
           <span class="size-1.5 rounded-full" :class="coverage.state === 'complete' ? 'bg-ink/60' : 'bg-warnfg'" />
@@ -86,16 +86,16 @@ async function exportCsv() {
     </div>
 
     <div class="flex flex-wrap items-center gap-2">
-      <GdSegmented :model-value="analysis.timeWindow" :options="windowOptions" @update:model-value="setWindow" />
+      <GdSegmented :model-value="analysis.timeWindow" :options="windowOptions" aria-label="分析时间范围" data-testid="analysis-window" @update:model-value="setWindow" />
       <GdButton variant="outline" @click="toggleCompare"><GitCompare :size="14" /> {{ analysis.compareIds.includes(repository.id) ? '移出比较' : '加入比较' }}</GdButton>
       <div class="flex items-center gap-1.5">
         <span class="text-[11px] text-muted">采集范围</span>
-        <GdSegmented v-model="analysis.collectionScope" size="sm" :options="collectionScopeOptions" />
+        <GdSegmented v-model="analysis.collectionScope" size="sm" :options="collectionScopeOptions" aria-label="采集模式" data-testid="collection-mode" />
       </div>
-      <GdButton :disabled="refreshing || clearing" :title="scopeDescription" @click="emit('refresh', analysis.collectionScope)"><RefreshCw :size="14" /> {{ refreshing ? '排队中…' : refreshLabel }}</GdButton>
+      <GdButton data-testid="collect-repository" :disabled="refreshing || clearing" :title="scopeDescription" @click="emit('refresh', analysis.collectionScope)"><RefreshCw :size="14" /> {{ refreshing ? '排队中…' : refreshLabel }}</GdButton>
       <GdIconButton label="导出聚合 CSV" :disabled="exporting" @click="exportCsv"><Download :size="16" /></GdIconButton>
       <GdButton variant="danger" size="sm" :loading="clearing" :disabled="refreshing" @click="emit('clear')"><Trash2 :size="13" />清除仓库数据</GdButton>
     </div>
-    <p class="basis-full m-0 -mt-3 text-[11.5px] text-muted">{{ scopeDescription }}</p>
+    <p class="basis-full m-0 -mt-3 text-[11.5px] text-muted" data-testid="collection-description">{{ scopeDescription }}</p>
   </div>
 </template>

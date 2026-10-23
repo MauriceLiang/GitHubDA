@@ -1,0 +1,66 @@
+name: Analysis window acceptance
+
+on:
+  pull_request:
+  push:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: >-
+          uv run --locked --all-extras pytest
+          tests/backend/test_insights.py
+          tests/backend/test_comparison_export.py
+          tests/backend/test_worker_deep.py
+          tests/backend/test_worker_queue.py
+          tests/backend/test_api_contract.py
+
+  browser:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Install isolated headless browser
+        run: |
+          node node_modules/@puppeteer/browsers/lib/main-cli.js install chrome-headless-shell@stable --path "$RUNNER_TEMP/repovantage-browser" --format '{{path}}' > "$RUNNER_TEMP/repovantage-browser-path"
+          echo "CHROME_PATH=$(tail -n 1 "$RUNNER_TEMP/repovantage-browser-path")" >> "$GITHUB_ENV"
+      - name: Start isolated Mock server
+        run: |
+          VITE_DATA_MODE=mock npm run dev -- --host 127.0.0.1 --port 5173 --strictPort > "$RUNNER_TEMP/repovantage-vite.log" 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:5173/ > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/repovantage-vite.log"
+          exit 1
+      - run: npm run test:e2e:analysis-window
+        env:
+          BASE_URL: http://127.0.0.1:5173
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/repovantage-window-e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: analysis-window-browser-evidence
+          path: |
+            ${{ runner.temp }}/repovantage-window-e2e
+            ${{ runner.temp }}/repovantage-vite.log
+          if-no-files-found: ignore

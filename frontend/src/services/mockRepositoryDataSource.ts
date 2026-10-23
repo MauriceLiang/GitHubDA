@@ -710,8 +710,8 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
       const observationWindow = available ? windowRange(seed, window) : { start: null, end: null }
       const issueSample = available ? histogram(seed, window, 'issue').sampleSize : 0
       const prSample = available ? histogram(seed, window, 'pr').sampleSize : 0
-      const issueQuality = !available || seed.issueCoverage.state === 'missing' ? 'missing' : seed.issueCoverage.state !== 'complete' ? 'partial' : issueSample < 10 ? 'insufficient_samples' : 'ready'
-      const prQuality = !available || seed.coverage.state === 'missing' ? 'missing' : seed.coverage.state !== 'complete' ? 'partial' : prSample < 10 ? 'insufficient_samples' : 'ready'
+      const issueQuality = !available || seed.issueCoverage.state === 'missing' ? 'missing' : seed.issueCoverage.state !== 'complete' ? 'partial' : issueSample === 0 ? 'insufficient_samples' : 'ready'
+      const prQuality = !available || seed.coverage.state === 'missing' ? 'missing' : seed.coverage.state !== 'complete' ? 'partial' : prSample === 0 ? 'insufficient_samples' : 'ready'
       const end = Date.parse(seed.lastAnalyzedAt ?? DATASET_END)
       const formal = seed.releases.filter((release) => !release.prerelease && Date.parse(release.publishedAt) >= end - 365 * DAY && Date.parse(release.publishedAt) < end)
         .sort((a, b) => a.publishedAt.localeCompare(b.publishedAt))
@@ -752,8 +752,9 @@ export class MockRepositoryDataSource implements RepositoryDataSource {
         releaseMedianDays: sameObservationWindow ? entry.releaseMedianDays : null,
       }))
     }
+    const dates = entries.flatMap((entry) => entry.points.map((point) => point.date)).sort()
     return {
-      window: { start: entries.flatMap((entry) => entry.points.map((point) => point.date)).sort()[0] ?? '—', end: entries.flatMap((entry) => entry.points.map((point) => point.date)).sort().at(-1) ?? '—' },
+      window: { start: dates[0] ?? '—', end: dates.at(-1) ?? '—' },
       requestedWindowDays: window,
       entries,
       mode,

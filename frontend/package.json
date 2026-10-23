@@ -9,7 +9,8 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
-    "capture": "node scripts/capture.mjs"
+    "capture": "node scripts/capture.mjs",
+    "test:e2e:analysis-window": "node scripts/e2e-analysis-window.mjs"
   },
   "dependencies": {
     "dompurify": "^3.4.17",
